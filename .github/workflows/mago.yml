@@ -1,0 +1,31 @@
+name: Mago Lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  mago-lint:
+    name: Run Mago Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP with Composer
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          coverage: none
+          tools: composer
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Setup Mago
+        uses: nhedger/setup-mago@v1
+
+      - name: Run Mago lint
+        run: mago lint
