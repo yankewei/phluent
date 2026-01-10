@@ -27,6 +27,17 @@ docker compose exec php composer install
 docker compose exec php php src/index.php
 ```
 
+## Code Quality (Mago)
+CI runs `mago format --dry-run`, `mago lint`, and `mago analyze` on every push and
+pull request.
+
+Local run (requires Mago installed):
+```bash
+mago format --dry-run
+mago lint
+mago analyze
+```
+
 ## Notes
 The current script reads file contents but does not yet ship them anywhere. Extend the
 event handler in `src/index.php` to parse or forward the data as needed.

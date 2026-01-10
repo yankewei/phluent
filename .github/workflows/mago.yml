@@ -1,12 +1,12 @@
-name: Mago Lint
+name: Mago Checks
 
 on:
   push:
   pull_request:
 
 jobs:
-  mago-lint:
-    name: Run Mago Lint
+  mago:
+    name: Run Mago Checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -27,5 +27,8 @@ jobs:
       - name: Setup Mago
         uses: nhedger/setup-mago@v1
 
-      - name: Run Mago lint
-        run: mago lint
+      - name: Run Mago checks
+        run: |
+          mago format --dry-run
+          mago lint --reporting-format=github
+          mago analyze --reporting-format=github
