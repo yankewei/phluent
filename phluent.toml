@@ -1,0 +1,12 @@
+# Phluent configuration (TOML)
+# Paths are resolved relative to this file's directory.
+
+[sources.laravel]
+type = "file"
+dir = "data"
+max_bytes = 10485760
+
+[sinks.laravel]
+type = "file"
+path = "output/laravel.log"
+inputs = ["laravel"]

@@ -13,18 +13,28 @@ Phluent is a lightweight file and log aggregation agent written in PHP.
 ## Quick Start (Local)
 ```bash
 composer install
-mkdir -p src/data
-php src/index.php
+mkdir -p data
+chmod +x phluent
+./phluent
 ```
 
-Drop or move files into `src/data` to trigger events. If you want to watch a different
-directory, update `$watchDir` in `src/index.php`.
+Drop or move files into `data` to trigger events. If you want to use a different
+base path, pass `--config-file` (the watcher will look for `data/` under the config file's directory):
+
+```bash
+./phluent --config-file /path/to/config.toml
+```
 
 ## Docker
 ```bash
+docker build -t phluent .
+docker run --rm -v "$(pwd)/data:/app/data" phluent
+```
+
+For development with a persistent container:
+```bash
 docker compose up -d --build
-docker compose exec php composer install
-docker compose exec php php src/index.php
+docker compose exec php phluent
 ```
 
 ## Code Quality (Mago)
@@ -40,4 +50,4 @@ mago analyze
 
 ## Notes
 The current script reads file contents but does not yet ship them anywhere. Extend the
-event handler in `src/index.php` to parse or forward the data as needed.
+event handler in `src/Application.php` to parse or forward the data as needed.

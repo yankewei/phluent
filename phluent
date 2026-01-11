@@ -1,0 +1,79 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+$usage = <<<TXT
+Usage: phluent [--config-file <config_file>]
+
+Options:
+  --config-file  Path to the config file (used to resolve data/).
+  -h, --help  Show this help message.
+
+TXT;
+
+function format_error(string $message): string
+{
+    if (getenv('NO_COLOR')) {
+        return $message;
+    }
+
+    if (function_exists('stream_isatty') && !stream_isatty(STDERR)) {
+        return $message;
+    }
+
+    return "\033[31m{$message}\033[0m";
+}
+
+$argv = $_SERVER['argv'] ?? [];
+$args = $argv;
+array_shift($args);
+
+$configFile = getenv('PHLUENT_CONFIG_FILE');
+
+if ($configFile === false || $configFile === '') {
+    $configFile = null;
+}
+
+for ($i = 0; $i < count($args); $i += 1) {
+    $arg = $args[$i];
+
+    if ($arg === '--help' || $arg === '-h') {
+        echo $usage;
+        exit(0);
+    }
+
+    if ($arg === '--config-file') {
+        $value = $args[$i + 1] ?? '';
+        if ($value === '' || str_starts_with($value, '--')) {
+            fwrite(STDERR, format_error("Error: --config-file requires a value.\n"));
+            fwrite(STDERR, $usage);
+            exit(2);
+        }
+        $configFile = $value;
+        $i += 1;
+        continue;
+    }
+
+    if (str_starts_with($arg, '--config-file=')) {
+        $value = substr($arg, strlen('--config-file='));
+        if ($value === '') {
+            fwrite(STDERR, format_error("Error: --config-file requires a value.\n"));
+            fwrite(STDERR, $usage);
+            exit(2);
+        }
+        $configFile = $value;
+        continue;
+    }
+
+    fwrite(STDERR, format_error("Error: unknown argument: {$arg}\n"));
+    fwrite(STDERR, $usage);
+    exit(2);
+}
+
+if ($configFile === null) {
+    fwrite(STDERR, format_error("Error: --config-file is required.\n"));
+    fwrite(STDERR, $usage);
+    exit(2);
+}
+
+require_once __DIR__ . '/bootstrap.php';
