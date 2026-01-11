@@ -207,7 +207,6 @@ final class Application
                 $file_path = $context['dir'] . DIRECTORY_SEPARATOR . $event['name'];
                 $this->enqueueRead($file_path, $context['max_bytes'], $context['sinks']);
             }
-
         });
 
         EventLoop::run();
