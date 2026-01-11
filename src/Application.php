@@ -10,17 +10,71 @@ use function Amp\async;
 final class Application
 {
     /**
-     * @param string[] $sinkPaths
+     * @var array<string, array{dev:int, ino:int, offset:int}>
      */
-    private function enqueueRead(string $filePath, ?int $maxBytes, array $sinkPaths): void
+    private array $fileStates = [];
+
+    /**
+     * @param array<int, array{path:string, format:string, compression: ?string}> $sinks
+     */
+    private function enqueueRead(string $filePath, ?int $maxBytes, array $sinks): void
     {
-        async(function () use ($filePath, $maxBytes, $sinkPaths): void {
+        async(function () use ($filePath, $maxBytes, $sinks): void {
             if (!is_file($filePath)) {
                 return;
             }
 
-            $uniqueSinkPaths = array_values(array_unique($sinkPaths));
-            if ($uniqueSinkPaths === []) {
+            $stat = $this->getFileStat($filePath);
+            if ($stat === null) {
+                $this->debug("stat failed path={$filePath}");
+                return;
+            }
+
+            $state = $this->fileStates[$filePath] ?? null;
+            $offset = $state['offset'] ?? 0;
+
+            if ($stat['size'] < $offset) {
+                $this->debug(
+                    "size shrink path={$filePath} size={$stat['size']} offset={$offset} dev={$stat['dev']} ino={$stat['ino']}",
+                );
+                $offset = 0;
+            }
+
+            if ($stat['size'] === $offset) {
+                $this->debug(
+                    "skip no new data path={$filePath} size={$stat['size']} offset={$offset} dev={$stat['dev']} ino={$stat['ino']}",
+                );
+                $this->fileStates[$filePath] = [
+                    'dev' => $stat['dev'],
+                    'ino' => $stat['ino'],
+                    'offset' => $offset,
+                ];
+                return;
+            }
+
+            $uniqueSinks = [];
+            foreach ($sinks as $sink) {
+                $path = $sink['path'] ?? null;
+                $format = $sink['format'] ?? null;
+                $compression = $sink['compression'] ?? null;
+
+                if (!is_string($path) || $path === '' || !is_string($format) || $format === '') {
+                    continue;
+                }
+
+                if ($compression !== null && !is_string($compression)) {
+                    continue;
+                }
+
+                $key = $path . '|' . $format . '|' . ($compression ?? '');
+                $uniqueSinks[$key] = [
+                    'path' => $path,
+                    'format' => $format,
+                    'compression' => $compression,
+                ];
+            }
+
+            if ($uniqueSinks === []) {
                 return;
             }
 
@@ -31,17 +85,26 @@ final class Application
             }
 
             $outputs = [];
-            foreach ($uniqueSinkPaths as $sinkPath) {
+            foreach ($uniqueSinks as $sink) {
+                $sinkPath = $sink['path'];
                 try {
                     $this->ensureSinkDirectory($sinkPath);
-                    $outputs[] = File\openFile($sinkPath, 'a');
+                    $outputs[] = [
+                        'writer' => $this->openSinkWriter($sinkPath, $sink['compression']),
+                        'format' => $sink['format'],
+                    ];
                 } catch (Throwable) {
                     $input->close();
                     foreach ($outputs as $output) {
-                        $output->close();
+                        $this->closeSinkWriter($output['writer']);
                     }
                     return;
                 }
+            }
+
+            if ($offset > 0) {
+                $input->seek($offset);
+                $this->debug("seek path={$filePath} offset={$offset}");
             }
 
             $buffer = '';
@@ -59,11 +122,55 @@ final class Application
                 $this->writeLine($outputs, $buffer, $maxBytes);
             }
 
+            $newOffset = $input->tell();
+
             $input->close();
             foreach ($outputs as $output) {
-                $output->close();
+                $this->closeSinkWriter($output['writer']);
             }
+
+            $this->fileStates[$filePath] = [
+                'dev' => $stat['dev'],
+                'ino' => $stat['ino'],
+                'offset' => $newOffset,
+            ];
+            $this->debug(
+                "update offset path={$filePath} new_offset={$newOffset} size={$stat['size']} dev={$stat['dev']} ino={$stat['ino']}",
+            );
         })->await();
+    }
+
+    private function debug(string $message): void
+    {
+        if (getenv('PHLUENT_DEBUG') !== '1') {
+            return;
+        }
+
+        fwrite(STDERR, "[phluent] {$message}" . PHP_EOL);
+    }
+
+    private function getFileStat(string $path): ?array
+    {
+        $previous = set_error_handler(function (int $type, string $message): void {
+            throw new RuntimeException($message);
+        });
+
+        try {
+            $stat = stat($path);
+        } catch (RuntimeException) {
+            $stat = false;
+        } finally {
+            restore_error_handler();
+            if ($previous !== null) {
+                set_error_handler($previous);
+            }
+        }
+
+        if ($stat === false) {
+            return null;
+        }
+
+        return $stat;
     }
 
     private function ensureSinkDirectory(string $sinkPath): void
@@ -77,7 +184,7 @@ final class Application
     }
 
     /**
-     * @param array<int, \Amp\File\File> $outputs
+     * @param array<int, array{writer:array{type:string, handle:mixed}, format:string}> $outputs
      */
     private function writeLine(array $outputs, string $line, ?int $maxBytes): void
     {
@@ -89,12 +196,78 @@ final class Application
         }
 
         foreach ($outputs as $output) {
-            $output->write($line);
+            $formatted = $this->formatLine($line, $output['format']);
+            if ($formatted === null) {
+                continue;
+            }
+            $this->writeToSinkWriter($output['writer'], $formatted);
         }
     }
 
+    private function formatLine(string $line, string $format): ?string
+    {
+        if ($format === 'ndjson') {
+            return $line;
+        }
+
+        throw new RuntimeException("Unsupported sink format: {$format}");
+    }
+
     /**
-     * @return array<string, string[]>
+     * @return array{type:string, handle:mixed}
+     */
+    private function openSinkWriter(string $path, ?string $compression): array
+    {
+        if ($compression === 'gzip') {
+            if (!function_exists('gzopen')) {
+                throw new RuntimeException('gzip compression requires the zlib extension.');
+            }
+
+            $handle = gzopen($path, 'ab');
+            if ($handle === false) {
+                throw new RuntimeException("Failed to open gzip sink: {$path}");
+            }
+
+            return [
+                'type' => 'gzip',
+                'handle' => $handle,
+            ];
+        }
+
+        return [
+            'type' => 'file',
+            'handle' => File\openFile($path, 'a'),
+        ];
+    }
+
+    /**
+     * @param array{type:string, handle:mixed} $writer
+     */
+    private function writeToSinkWriter(array $writer, string $data): void
+    {
+        if ($writer['type'] === 'gzip') {
+            gzwrite($writer['handle'], $data);
+            return;
+        }
+
+        $writer['handle']->write($data);
+    }
+
+    /**
+     * @param array{type:string, handle:mixed} $writer
+     */
+    private function closeSinkWriter(array $writer): void
+    {
+        if ($writer['type'] === 'gzip') {
+            gzclose($writer['handle']);
+            return;
+        }
+
+        $writer['handle']->close();
+    }
+
+    /**
+     * @return array<string, array<int, array{path:string, format:string, compression: ?string}>>
      */
     private function buildSourceSinkMap(Config $config): array
     {
@@ -103,6 +276,16 @@ final class Application
         foreach ($config->sinks as $sink) {
             $path = $sink['path'] ?? null;
             if (!is_string($path) || $path === '') {
+                continue;
+            }
+
+            $format = $sink['format'] ?? null;
+            if (!is_string($format) || $format === '') {
+                continue;
+            }
+
+            $compression = $sink['compression'] ?? null;
+            if ($compression !== null && !is_string($compression)) {
                 continue;
             }
 
@@ -116,12 +299,21 @@ final class Application
                     continue;
                 }
 
-                $map[$input][] = $path;
+                $map[$input][] = [
+                    'path' => $path,
+                    'format' => $format,
+                    'compression' => $compression,
+                ];
             }
         }
 
         foreach ($map as $sourceId => $paths) {
-            $map[$sourceId] = array_values(array_unique($paths));
+            $unique = [];
+            foreach ($paths as $sink) {
+                $key = $sink['path'] . '|' . $sink['format'] . '|' . ($sink['compression'] ?? '');
+                $unique[$key] = $sink;
+            }
+            $map[$sourceId] = array_values($unique);
         }
 
         return $map;

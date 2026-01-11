@@ -8,5 +8,8 @@ max_bytes = 10485760
 
 [sinks.laravel]
 type = "file"
-path = "output/laravel.log"
+dir = "output"
+prefix = "laravel"
+format = "ndjson"
+compression = "gzip"
 inputs = ["laravel"]

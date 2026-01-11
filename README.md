@@ -25,6 +25,30 @@ base path, pass `--config-file` (the watcher will look for `data/` under the con
 ./phluent --config-file /path/to/config.toml
 ```
 
+## Configuration
+Phluent reads a TOML config. Paths are resolved relative to the config file.
+
+Example:
+```toml
+[sources.laravel]
+type = "file"
+dir = "data"
+max_bytes = 10485760
+
+[sinks.laravel]
+type = "file"
+dir = "output"
+prefix = "laravel"
+format = "ndjson"
+compression = "gzip"
+inputs = ["laravel"]
+```
+
+Notes:
+- Each sink writes to a uniquely named file under `dir`.
+- Output naming: `[prefix-]YYYYMMDD-HHMMSS-random.ndjson[.gz]`.
+- `compression = "gzip"` requires the PHP `zlib` extension.
+
 ## Docker
 ```bash
 docker build -t phluent .

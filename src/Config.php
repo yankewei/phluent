@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use Devium\Toml\Toml;
 use Devium\Toml\TomlError;
+use Respect\Validation\Exceptions\NestedValidationException;
+use Respect\Validation\Validator;
 
 final class Config
 {
@@ -36,16 +38,58 @@ final class Config
             throw new RuntimeException("Invalid TOML in {$path}:\n{$error->getMessage()}");
         }
 
-        if (!is_array($data)) {
-            throw new RuntimeException("Invalid TOML document in {$path}");
-        }
+        $sources = $data['sources'] ?? [];
+        $sinks = $data['sinks'] ?? [];
+
+        self::assertSchema($sources, self::sourcesSchema(), 'sources');
+        self::assertSchema($sinks, self::sinksSchema(), 'sinks');
 
         $config = new self();
         $config->baseDir = dirname($path);
-        $config->sources = self::normalizeSources($data['sources'] ?? [], $config->baseDir);
-        $config->sinks = self::normalizeSinks($data['sinks'] ?? [], $config->sources, $config->baseDir);
+        $config->sources = self::normalizeSources($sources, $config->baseDir);
+        $config->sinks = self::normalizeSinks($sinks, $config->sources, $config->baseDir);
 
         return $config;
+    }
+
+    private static function assertSchema(array $value, Validator $validator, string $path): void
+    {
+        try {
+            $validator->setName($path)->assert($value);
+        } catch (NestedValidationException $error) {
+            throw new RuntimeException("Invalid config at {$path}:\n{$error->getFullMessage()}");
+        }
+    }
+
+    private static function sourcesSchema(): Validator
+    {
+        return Validator::arrayType()->each(self::sourceSchema());
+    }
+
+    private static function sourceSchema(): Validator
+    {
+        return Validator::arrayType()->keySet(
+            Validator::key('type', Validator::stringType()->notEmpty()->equals('file')),
+            Validator::key('dir', Validator::stringType()->notEmpty()),
+            Validator::key('max_bytes', Validator::intType()->positive(), false),
+        );
+    }
+
+    private static function sinksSchema(): Validator
+    {
+        return Validator::arrayType()->each(self::sinkSchema());
+    }
+
+    private static function sinkSchema(): Validator
+    {
+        return Validator::arrayType()->keySet(
+            Validator::key('type', Validator::stringType()->notEmpty()->equals('file')),
+            Validator::key('dir', Validator::stringType()->notEmpty()),
+            Validator::key('inputs', Validator::arrayType()->notEmpty()->each(Validator::stringType()->notEmpty())),
+            Validator::key('prefix', Validator::stringType()->notEmpty(), false),
+            Validator::key('format', Validator::stringType()->notEmpty()->equals('ndjson'), false),
+            Validator::key('compression', Validator::stringType()->notEmpty()->equals('gzip'), false),
+        );
     }
 
     /**
@@ -56,21 +100,9 @@ final class Config
         $normalized = [];
 
         foreach ($sources as $id => $source) {
-            if (!is_array($source)) {
-                throw new RuntimeException("Source definition must be a table: sources.{$id}");
-            }
-
-            $type = self::requireString($source, 'type', "sources.{$id}.type");
             $normalized[$id] = $source;
-            $normalized[$id]['type'] = $type;
-
-            if ($type === 'file') {
-                $dir = self::requireString($source, 'dir', "sources.{$id}.dir");
-                $normalized[$id]['dir'] = self::resolvePath($dir, $baseDir);
-                $normalized[$id]['max_bytes'] = self::optionalInt($source, 'max_bytes', "sources.{$id}.max_bytes");
-            } else {
-                throw new RuntimeException("Unsupported source type: sources.{$id}.type must be 'file'");
-            }
+            $normalized[$id]['dir'] = self::resolvePath($source['dir'], $baseDir);
+            $normalized[$id]['max_bytes'] = $source['max_bytes'] ?? null;
         }
 
         return $normalized;
@@ -85,17 +117,13 @@ final class Config
         $normalized = [];
 
         foreach ($sinks as $id => $sink) {
-            if (!is_array($sink)) {
-                throw new RuntimeException("Sink definition must be a table: sinks.{$id}");
-            }
-
-            $type = self::requireString($sink, 'type', "sinks.{$id}.type");
-            if ($type !== 'file') {
-                throw new RuntimeException("Unsupported sink type: sinks.{$id}.type must be 'file'");
-            }
-            $path = self::requireString($sink, 'path', "sinks.{$id}.path");
-            $sink['path'] = self::resolvePath($path, $baseDir);
-            $inputs = self::requireStringArray($sink, 'inputs', "sinks.{$id}.inputs");
+            $dir = self::resolvePath($sink['dir'], $baseDir);
+            $prefix = $sink['prefix'] ?? '';
+            $format = $sink['format'] ?? 'ndjson';
+            $compression = $sink['compression'] ?? null;
+            $sink['path'] = self::buildDatedUniquePath($dir, $prefix, $format, $compression);
+            $sink['format'] = $format;
+            $inputs = $sink['inputs'];
 
             foreach ($inputs as $inputId) {
                 if (!array_key_exists($inputId, $sources)) {
@@ -104,8 +132,10 @@ final class Config
             }
 
             $normalized[$id] = $sink;
-            $normalized[$id]['type'] = $type;
+            $normalized[$id]['type'] = $sink['type'];
             $normalized[$id]['inputs'] = $inputs;
+            $normalized[$id]['format'] = $format;
+            $normalized[$id]['compression'] = $compression;
         }
 
         return $normalized;
@@ -124,46 +154,49 @@ final class Config
         return rtrim($baseDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $path;
     }
 
-    private static function requireString(array $data, string $key, string $path): string
-    {
-        $value = $data[$key] ?? null;
-        if (!is_string($value) || $value === '') {
-            throw new RuntimeException("Invalid or missing string value: {$path}");
-        }
+    private static function buildDatedUniquePath(
+        string $dir,
+        string $prefix,
+        string $format,
+        ?string $compression,
+    ): string {
+        $date = date('Ymd-His');
+        $normalizedPrefix = trim($prefix);
+        $extension = self::formatExtension($format, $compression);
 
-        return $value;
-    }
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $suffix = bin2hex(random_bytes(3));
+            $filename = $date . '-' . $suffix;
 
-    private static function optionalInt(array $data, string $key, string $path): ?int
-    {
-        if (!array_key_exists($key, $data)) {
-            return null;
-        }
+            if ($normalizedPrefix !== '') {
+                $filename = $normalizedPrefix . '-' . $filename;
+            }
 
-        $value = $data[$key];
-        if (!is_int($value) || $value <= 0) {
-            throw new RuntimeException("Invalid integer value: {$path}");
-        }
+            if ($extension !== '') {
+                $filename .= '.' . $extension;
+            }
 
-        return $value;
-    }
+            $candidate = $dir . DIRECTORY_SEPARATOR . $filename;
 
-    /**
-     * @return string[]
-     */
-    private static function requireStringArray(array $data, string $key, string $path): array
-    {
-        $value = $data[$key] ?? null;
-        if (!is_array($value) || $value === []) {
-            throw new RuntimeException("Invalid or missing array value: {$path}");
-        }
-
-        foreach ($value as $item) {
-            if (!is_string($item) || $item === '') {
-                throw new RuntimeException("Array must contain non-empty strings: {$path}");
+            if (!file_exists($candidate)) {
+                return $candidate;
             }
         }
 
-        return $value;
+        throw new RuntimeException('Failed to generate a unique sink path.');
+    }
+
+    private static function formatExtension(string $format, ?string $compression): string
+    {
+        $base = match ($format) {
+            'ndjson' => 'ndjson',
+            default => '',
+        };
+
+        if ($compression === 'gzip') {
+            return $base === '' ? 'gz' : $base . '.gz';
+        }
+
+        return $base;
     }
 }
