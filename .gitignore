@@ -1,8 +1,11 @@
 vendor
 ./scripts/*
 .DS_Store
+Thumbs.db
 *.cache
 *.log
+*.tmp
+*.swp
 .env
 .env.*
 .idea/

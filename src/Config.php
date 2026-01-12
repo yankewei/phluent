@@ -89,6 +89,14 @@ final class Config
             Validator::key('prefix', Validator::stringType()->notEmpty(), false),
             Validator::key('format', Validator::stringType()->notEmpty()->equals('ndjson'), false),
             Validator::key('compression', Validator::stringType()->notEmpty()->equals('gzip'), false),
+            Validator::key(
+                'batch',
+                Validator::arrayType()->keySet(
+                    Validator::key('max_bytes', Validator::intType()->positive()),
+                    Validator::key('max_wait_seconds', Validator::intType()->positive()),
+                ),
+                false,
+            ),
         );
     }
 
@@ -121,6 +129,19 @@ final class Config
             $prefix = $sink['prefix'] ?? '';
             $format = $sink['format'] ?? 'ndjson';
             $compression = $sink['compression'] ?? null;
+            $batch = $sink['batch'] ?? null;
+            $batchMaxBytes = null;
+            $batchMaxWaitSeconds = null;
+            if ($batch !== null) {
+                $batchMaxBytes = $batch['max_bytes'] ?? null;
+                $batchMaxWaitSeconds = $batch['max_wait_seconds'] ?? null;
+                if ($batchMaxBytes === null || $batchMaxWaitSeconds === null) {
+                    throw new RuntimeException(
+                        "Invalid config at sinks.{$id}.batch: max_bytes and max_wait_seconds must be set together",
+                    );
+                }
+            }
+
             $sink['path'] = self::buildDatedUniquePath($dir, $prefix, $format, $compression);
             $sink['format'] = $format;
             $inputs = $sink['inputs'];
@@ -136,6 +157,10 @@ final class Config
             $normalized[$id]['inputs'] = $inputs;
             $normalized[$id]['format'] = $format;
             $normalized[$id]['compression'] = $compression;
+            $normalized[$id]['batch'] = $batch;
+            $normalized[$id]['batch_max_bytes'] = $batchMaxBytes;
+            $normalized[$id]['batch_max_wait_seconds'] = $batchMaxWaitSeconds;
+            $normalized[$id]['buffer_enabled'] = $batchMaxBytes !== null;
         }
 
         return $normalized;

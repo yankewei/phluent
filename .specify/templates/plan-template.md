@@ -35,10 +35,14 @@
   required for merge.
 - Testing standards: test strategy covers new behavior and regression cases;
   any waivers are documented.
+- Configuration standards: schema validation and error messaging are planned
+  for any config changes.
+- File processing correctness: offset, truncation, and `max_bytes` behaviors
+  are covered when ingestion is touched.
+- Performance requirements: measurable targets are defined and validation is
+  planned when ingestion or hot paths are impacted.
 - UX consistency: CLI/config/output changes are reviewed for consistency and
   docs updates are planned.
-- Performance requirements: measurable targets are defined and validation is
-  planned.
 
 ## Project Structure
 

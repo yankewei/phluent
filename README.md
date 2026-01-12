@@ -42,12 +42,19 @@ prefix = "laravel"
 format = "ndjson"
 compression = "gzip"
 inputs = ["laravel"]
+
+[sinks.laravel.batch]
+max_bytes = 262144
+max_wait_seconds = 5
 ```
 
 Notes:
 - Each sink writes to a uniquely named file under `dir`.
 - Output naming: `[prefix-]YYYYMMDD-HHMMSS-random.ndjson[.gz]`.
 - `compression = "gzip"` requires the PHP `zlib` extension.
+- Buffering is enabled only when both `batch.max_bytes` and
+  `batch.max_wait_seconds` are set; omit the `batch` section to write
+  immediately.
 
 ## Docker
 ```bash
