@@ -1,0 +1,11 @@
+[sources.main]
+type = "file"
+dir = "input"
+max_bytes = 1024
+
+[sinks.main]
+type = "file"
+dir = "output"
+prefix = "core"
+format = "ndjson"
+inputs = ["main"]

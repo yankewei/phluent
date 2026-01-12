@@ -72,6 +72,11 @@ mago lint
 mago analyze
 ```
 
+## Testing
+```bash
+composer test
+```
+
 ## Notes
 The current script reads file contents but does not yet ship them anywhere. Extend the
 event handler in `src/Application.php` to parse or forward the data as needed.

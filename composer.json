@@ -10,6 +10,12 @@
             "": "src/"
         }
     },
-    "config": {
+    "scripts": {
+        "test": "phpunit"
+    },
+    "config": {},
+    "require-dev": {
+        "phpunit/phpunit": "^9.6",
+        "amphp/phpunit-util": "^3.0"
     }
 }
