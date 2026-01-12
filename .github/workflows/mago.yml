@@ -32,3 +32,6 @@ jobs:
           mago format --dry-run
           mago lint --reporting-format=github
           mago analyze --reporting-format=github
+
+      - name: Run PHPUnit tests
+        run: composer test

@@ -1,2 +1,12 @@
 vendor
-scripts
+./scripts/*
+.DS_Store
+*.cache
+*.log
+.env
+.env.*
+.idea/
+.phpunit.result.cache
+.vscode/
+coverage/
+.codex

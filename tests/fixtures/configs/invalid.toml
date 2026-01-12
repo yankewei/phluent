@@ -1,0 +1,7 @@
+[sources.main]
+type = "file"
+
+[sinks.main]
+type = "file"
+dir = "output"
+inputs = ["main"]
