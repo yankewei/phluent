@@ -102,6 +102,10 @@
   conventions and include doc/example updates.
 - **NFR-003 (Quality Gates)**: Code MUST pass format/lint/analyze checks and
   include tests for new behavior and regressions.
+- **NFR-004 (Configuration Validation)**: Config changes MUST include schema
+  validation and actionable error messaging.
+- **NFR-005 (File Processing Correctness)**: Ingestion changes MUST preserve
+  line boundaries and offset/truncation handling.
 
 ### Key Entities *(include if feature involves data)*
 

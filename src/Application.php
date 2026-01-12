@@ -15,6 +15,11 @@ final class Application
     private array $fileStates = [];
 
     /**
+     * @var array<string, array{handle:?Amp\File\File, path:?string, size:int, last_append_at:float, timer_id:?string, sink_path:string, compression:?string, max_bytes:int, max_wait_seconds:int}>
+     */
+    private array $buffers = [];
+
+    /**
      * @param array<int, array{path:string, format:string, compression: ?string}> $sinks
      */
     private function enqueueRead(string $filePath, ?int $maxBytes, array $sinks): void
@@ -57,6 +62,8 @@ final class Application
                 $path = $sink['path'] ?? null;
                 $format = $sink['format'] ?? null;
                 $compression = $sink['compression'] ?? null;
+                $batchMaxBytes = $sink['batch_max_bytes'] ?? null;
+                $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? null;
 
                 if (!is_string($path) || $path === '' || !is_string($format) || $format === '') {
                     continue;
@@ -66,11 +73,34 @@ final class Application
                     continue;
                 }
 
-                $key = $path . '|' . $format . '|' . ($compression ?? '');
+                if (($batchMaxBytes === null) !== ($batchMaxWaitSeconds === null)) {
+                    continue;
+                }
+
+                if ($batchMaxBytes !== null && (!is_int($batchMaxBytes) || $batchMaxBytes <= 0)) {
+                    continue;
+                }
+
+                if ($batchMaxWaitSeconds !== null && (!is_int($batchMaxWaitSeconds) || $batchMaxWaitSeconds <= 0)) {
+                    continue;
+                }
+
+                $key =
+                    $path
+                    . '|'
+                    . $format
+                    . '|'
+                    . ($compression ?? '')
+                    . '|'
+                    . ($batchMaxBytes ?? '')
+                    . '|'
+                    . ($batchMaxWaitSeconds ?? '');
                 $uniqueSinks[$key] = [
                     'path' => $path,
                     'format' => $format,
                     'compression' => $compression,
+                    'batch_max_bytes' => $batchMaxBytes,
+                    'batch_max_wait_seconds' => $batchMaxWaitSeconds,
                 ];
             }
 
@@ -89,14 +119,23 @@ final class Application
                 $sinkPath = $sink['path'];
                 try {
                     $this->ensureSinkDirectory($sinkPath);
+                    $batchMaxBytes = $sink['batch_max_bytes'] ?? null;
+                    $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? null;
+                    $bufferingEnabled = $batchMaxBytes !== null && $batchMaxWaitSeconds !== null;
                     $outputs[] = [
-                        'writer' => $this->openSinkWriter($sinkPath, $sink['compression']),
+                        'writer' => $bufferingEnabled ? null : $this->openSinkWriter($sinkPath, $sink['compression']),
                         'format' => $sink['format'],
+                        'path' => $sinkPath,
+                        'compression' => $sink['compression'],
+                        'batch_max_bytes' => $batchMaxBytes,
+                        'batch_max_wait_seconds' => $batchMaxWaitSeconds,
                     ];
                 } catch (Throwable) {
                     $input->close();
                     foreach ($outputs as $output) {
-                        $this->closeSinkWriter($output['writer']);
+                        if ($output['writer'] !== null) {
+                            $this->closeSinkWriter($output['writer']);
+                        }
                     }
                     return;
                 }
@@ -126,7 +165,9 @@ final class Application
 
             $input->close();
             foreach ($outputs as $output) {
-                $this->closeSinkWriter($output['writer']);
+                if ($output['writer'] !== null) {
+                    $this->closeSinkWriter($output['writer']);
+                }
             }
 
             $this->fileStates[$filePath] = [
@@ -184,7 +225,7 @@ final class Application
     }
 
     /**
-     * @param array<int, array{writer:array{type:string, handle:mixed}, format:string}> $outputs
+     * @param array<int, array{writer:?array{type:string, handle:mixed}, format:string, path:string, compression:?string, batch_max_bytes:?int, batch_max_wait_seconds:?int}> $outputs
      */
     private function writeLine(array $outputs, string $line, ?int $maxBytes): void
     {
@@ -200,7 +241,157 @@ final class Application
             if ($formatted === null) {
                 continue;
             }
-            $this->writeToSinkWriter($output['writer'], $formatted);
+            $batchMaxBytes = $output['batch_max_bytes'] ?? null;
+            $batchMaxWaitSeconds = $output['batch_max_wait_seconds'] ?? null;
+            if ($batchMaxBytes !== null && $batchMaxWaitSeconds !== null) {
+                $this->bufferLine($output, $formatted);
+                continue;
+            }
+            if ($output['writer'] !== null) {
+                $this->writeToSinkWriter($output['writer'], $formatted);
+            }
+        }
+    }
+
+    /**
+     * @param array{writer:?array{type:string, handle:mixed}, format:string, path:string, compression:?string, batch_max_bytes:int, batch_max_wait_seconds:int} $output
+     */
+    private function bufferLine(array $output, string $data): void
+    {
+        $sinkKey = $output['path'];
+        $buffer = $this->buffers[$sinkKey] ?? null;
+        if ($buffer === null || $buffer['handle'] === null) {
+            $buffer = $this->createBufferState($output);
+        }
+
+        $buffer['handle']->write($data);
+        $buffer['size'] += strlen($data);
+        $buffer['last_append_at'] = microtime(true);
+        $this->buffers[$sinkKey] = $buffer;
+
+        $this->scheduleBufferFlush($sinkKey, $buffer['max_wait_seconds'], $buffer['last_append_at']);
+
+        if ($buffer['size'] >= $buffer['max_bytes']) {
+            $this->flushBuffer($sinkKey);
+        }
+    }
+
+    /**
+     * @param array{path:string, compression:?string, batch_max_bytes:int, batch_max_wait_seconds:int} $output
+     * @return array{handle:Amp\File\File, path:string, size:int, last_append_at:float, timer_id:?string, sink_path:string, compression:?string, max_bytes:int, max_wait_seconds:int}
+     */
+    private function createBufferState(array $output): array
+    {
+        $path = $this->createTempBufferPath();
+        $handle = File\openFile($path, 'c+');
+
+        return [
+            'handle' => $handle,
+            'path' => $path,
+            'size' => 0,
+            'last_append_at' => 0.0,
+            'timer_id' => null,
+            'sink_path' => $output['path'],
+            'compression' => $output['compression'],
+            'max_bytes' => $output['batch_max_bytes'],
+            'max_wait_seconds' => $output['batch_max_wait_seconds'],
+        ];
+    }
+
+    private function createTempBufferPath(): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'phluent-batch-');
+        if ($path === false) {
+            throw new RuntimeException('Failed to create temp buffer file');
+        }
+
+        return $path;
+    }
+
+    private function scheduleBufferFlush(string $sinkKey, int $waitSeconds, float $lastAppendAt): void
+    {
+        if ($waitSeconds <= 0) {
+            return;
+        }
+
+        $buffer = $this->buffers[$sinkKey] ?? null;
+        if ($buffer === null) {
+            return;
+        }
+
+        if ($buffer['timer_id'] !== null) {
+            EventLoop::cancel($buffer['timer_id']);
+        }
+
+        $timerId = EventLoop::delay($waitSeconds, function () use ($sinkKey, $lastAppendAt): void {
+            $current = $this->buffers[$sinkKey] ?? null;
+            if ($current === null || $current['size'] === 0) {
+                return;
+            }
+            if ($current['last_append_at'] !== $lastAppendAt) {
+                return;
+            }
+            $this->flushBuffer($sinkKey);
+        });
+
+        $this->buffers[$sinkKey]['timer_id'] = $timerId;
+    }
+
+    private function flushBuffer(string $sinkKey): void
+    {
+        $buffer = $this->buffers[$sinkKey] ?? null;
+        if ($buffer === null || $buffer['size'] === 0 || $buffer['handle'] === null || $buffer['path'] === null) {
+            return;
+        }
+
+        if ($buffer['timer_id'] !== null) {
+            EventLoop::cancel($buffer['timer_id']);
+        }
+
+        $buffer['handle']->seek(0);
+        $writer = $this->openSinkWriter($buffer['sink_path'], $buffer['compression']);
+        try {
+            while (($chunk = $buffer['handle']->read()) !== null) {
+                $this->writeToSinkWriter($writer, $chunk);
+            }
+        } finally {
+            $this->closeSinkWriter($writer);
+            $buffer['handle']->close();
+            $this->safeUnlink($buffer['path']);
+        }
+
+        $this->buffers[$sinkKey] = [
+            'handle' => null,
+            'path' => null,
+            'size' => 0,
+            'last_append_at' => 0.0,
+            'timer_id' => null,
+            'sink_path' => $buffer['sink_path'],
+            'compression' => $buffer['compression'],
+            'max_bytes' => $buffer['max_bytes'],
+            'max_wait_seconds' => $buffer['max_wait_seconds'],
+        ];
+    }
+
+    private function safeUnlink(string $path): void
+    {
+        if ($path === '' || !file_exists($path)) {
+            return;
+        }
+
+        $previous = set_error_handler(static function (int $type, string $message): void {
+            throw new RuntimeException($message);
+        });
+
+        try {
+            unlink($path);
+        } catch (RuntimeException) {
+            return;
+        } finally {
+            restore_error_handler();
+            if ($previous !== null) {
+                set_error_handler($previous);
+            }
         }
     }
 
@@ -267,7 +458,7 @@ final class Application
     }
 
     /**
-     * @return array<string, array<int, array{path:string, format:string, compression: ?string}>>
+     * @return array<string, array<int, array{path:string, format:string, compression:?string, batch_max_bytes:?int, batch_max_wait_seconds:?int}>>
      */
     private function buildSourceSinkMap(Config $config): array
     {
@@ -289,6 +480,12 @@ final class Application
                 continue;
             }
 
+            $batchMaxBytes = $sink['batch_max_bytes'] ?? null;
+            $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? null;
+            if (($batchMaxBytes === null) !== ($batchMaxWaitSeconds === null)) {
+                continue;
+            }
+
             $inputs = $sink['inputs'] ?? [];
             if (!is_array($inputs)) {
                 continue;
@@ -303,6 +500,8 @@ final class Application
                     'path' => $path,
                     'format' => $format,
                     'compression' => $compression,
+                    'batch_max_bytes' => $batchMaxBytes,
+                    'batch_max_wait_seconds' => $batchMaxWaitSeconds,
                 ];
             }
         }
@@ -310,7 +509,16 @@ final class Application
         foreach ($map as $sourceId => $paths) {
             $unique = [];
             foreach ($paths as $sink) {
-                $key = $sink['path'] . '|' . $sink['format'] . '|' . ($sink['compression'] ?? '');
+                $key =
+                    $sink['path']
+                    . '|'
+                    . $sink['format']
+                    . '|'
+                    . ($sink['compression'] ?? '')
+                    . '|'
+                    . ($sink['batch_max_bytes'] ?? '')
+                    . '|'
+                    . ($sink['batch_max_wait_seconds'] ?? '');
                 $unique[$key] = $sink;
             }
             $map[$sourceId] = array_values($unique);
