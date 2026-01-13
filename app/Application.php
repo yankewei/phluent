@@ -2,8 +2,12 @@
 
 declare(strict_types=1);
 
+namespace App;
+
+use App\Sink\SinkDriverRegistry;
 use Amp\File;
 use Revolt\EventLoop;
+use RuntimeException;
 
 use function Amp\async;
 
@@ -15,12 +19,29 @@ final class Application
     private array $fileStates = [];
 
     /**
-     * @var array<string, array{handle:?Amp\File\File, path:?string, size:int, last_append_at:float, timer_id:?string, sink_path:string, compression:?string, max_bytes:int, max_wait_seconds:int}>
+     * @var array<string, array{
+     *   handle:?Amp\File\File,
+     *   path:?string,
+     *   size:int,
+     *   last_append_at:float,
+     *   timer_id:?string,
+     *   sink:array<string, mixed>,
+     *   driver:\App\Sink\SinkDriver,
+     *   max_bytes:int,
+     *   max_wait_seconds:int
+     * }>
      */
     private array $buffers = [];
 
+    private SinkDriverRegistry $sinkDrivers;
+
+    public function __construct(protected Config $config, ?SinkDriverRegistry $sinkDrivers = null)
+    {
+        $this->sinkDrivers = $sinkDrivers ?? SinkDriverRegistry::withDefaults();
+    }
+
     /**
-     * @param array<int, array{path:string, format:string, compression: ?string}> $sinks
+     * @param array<int, array<string, mixed>> $sinks
      */
     private function enqueueRead(string $filePath, ?int $maxBytes, array $sinks): void
     {
@@ -59,48 +80,15 @@ final class Application
 
             $uniqueSinks = [];
             foreach ($sinks as $sink) {
-                $path = $sink['path'] ?? null;
-                $format = $sink['format'] ?? null;
-                $compression = $sink['compression'] ?? null;
-                $batchMaxBytes = $sink['batch_max_bytes'] ?? null;
-                $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? null;
-
-                if (!is_string($path) || $path === '' || !is_string($format) || $format === '') {
-                    continue;
+                $type = $sink['type'] ?? '';
+                if (!is_string($type) || $type === '') {
+                    throw new RuntimeException('Sink type is required.');
                 }
-
-                if ($compression !== null && !is_string($compression)) {
-                    continue;
-                }
-
-                if (($batchMaxBytes === null) !== ($batchMaxWaitSeconds === null)) {
-                    continue;
-                }
-
-                if ($batchMaxBytes !== null && (!is_int($batchMaxBytes) || $batchMaxBytes <= 0)) {
-                    continue;
-                }
-
-                if ($batchMaxWaitSeconds !== null && (!is_int($batchMaxWaitSeconds) || $batchMaxWaitSeconds <= 0)) {
-                    continue;
-                }
-
-                $key =
-                    $path
-                    . '|'
-                    . $format
-                    . '|'
-                    . ($compression ?? '')
-                    . '|'
-                    . ($batchMaxBytes ?? '')
-                    . '|'
-                    . ($batchMaxWaitSeconds ?? '');
+                $driver = $this->sinkDrivers->get($type);
+                $key = $driver->uniqueKey($sink);
                 $uniqueSinks[$key] = [
-                    'path' => $path,
-                    'format' => $format,
-                    'compression' => $compression,
-                    'batch_max_bytes' => $batchMaxBytes,
-                    'batch_max_wait_seconds' => $batchMaxWaitSeconds,
+                    'driver' => $driver,
+                    'sink' => $sink,
                 ];
             }
 
@@ -115,18 +103,18 @@ final class Application
             }
 
             $outputs = [];
-            foreach ($uniqueSinks as $sink) {
-                $sinkPath = $sink['path'];
+            foreach ($uniqueSinks as $entry) {
+                $sink = $entry['sink'];
+                $driver = $entry['driver'];
                 try {
-                    $this->ensureSinkDirectory($sinkPath);
+                    $driver->prepare($sink);
                     $batchMaxBytes = $sink['batch_max_bytes'] ?? null;
                     $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? null;
                     $bufferingEnabled = $batchMaxBytes !== null && $batchMaxWaitSeconds !== null;
                     $outputs[] = [
-                        'writer' => $bufferingEnabled ? null : $this->openSinkWriter($sinkPath, $sink['compression']),
-                        'format' => $sink['format'],
-                        'path' => $sinkPath,
-                        'compression' => $sink['compression'],
+                        'driver' => $driver,
+                        'sink' => $sink,
+                        'writer' => $bufferingEnabled ? null : $driver->openWriter($sink),
                         'batch_max_bytes' => $batchMaxBytes,
                         'batch_max_wait_seconds' => $batchMaxWaitSeconds,
                     ];
@@ -134,7 +122,7 @@ final class Application
                     $input->close();
                     foreach ($outputs as $output) {
                         if ($output['writer'] !== null) {
-                            $this->closeSinkWriter($output['writer']);
+                            $output['writer']->close();
                         }
                     }
                     return;
@@ -166,7 +154,7 @@ final class Application
             $input->close();
             foreach ($outputs as $output) {
                 if ($output['writer'] !== null) {
-                    $this->closeSinkWriter($output['writer']);
+                    $output['writer']->close();
                 }
             }
 
@@ -214,18 +202,14 @@ final class Application
         return $stat;
     }
 
-    private function ensureSinkDirectory(string $sinkPath): void
-    {
-        $dir = dirname($sinkPath);
-        if ($dir === '' || $dir === '.') {
-            return;
-        }
-
-        File\createDirectoryRecursively($dir);
-    }
-
     /**
-     * @param array<int, array{writer:?array{type:string, handle:mixed}, format:string, path:string, compression:?string, batch_max_bytes:?int, batch_max_wait_seconds:?int}> $outputs
+     * @param array<int, array{
+     *   driver:\App\Sink\SinkDriver,
+     *   sink:array<string, mixed>,
+     *   writer:?\App\Sink\SinkWriter,
+     *   batch_max_bytes:?int,
+     *   batch_max_wait_seconds:?int
+     * }> $outputs
      */
     private function writeLine(array $outputs, string $line, ?int $maxBytes): void
     {
@@ -237,7 +221,7 @@ final class Application
         }
 
         foreach ($outputs as $output) {
-            $formatted = $this->formatLine($line, $output['format']);
+            $formatted = $output['driver']->formatLine($line, $output['sink']);
             if ($formatted === null) {
                 continue;
             }
@@ -248,17 +232,22 @@ final class Application
                 continue;
             }
             if ($output['writer'] !== null) {
-                $this->writeToSinkWriter($output['writer'], $formatted);
+                $output['writer']->write($formatted);
             }
         }
     }
 
     /**
-     * @param array{writer:?array{type:string, handle:mixed}, format:string, path:string, compression:?string, batch_max_bytes:int, batch_max_wait_seconds:int} $output
+     * @param array{
+     *   driver:\App\Sink\SinkDriver,
+     *   sink:array<string, mixed>,
+     *   batch_max_bytes:int,
+     *   batch_max_wait_seconds:int
+     * } $output
      */
     private function bufferLine(array $output, string $data): void
     {
-        $sinkKey = $output['path'];
+        $sinkKey = $output['driver']->uniqueKey($output['sink']);
         $buffer = $this->buffers[$sinkKey] ?? null;
         if ($buffer === null || $buffer['handle'] === null) {
             $buffer = $this->createBufferState($output);
@@ -277,8 +266,8 @@ final class Application
     }
 
     /**
-     * @param array{path:string, compression:?string, batch_max_bytes:int, batch_max_wait_seconds:int} $output
-     * @return array{handle:Amp\File\File, path:string, size:int, last_append_at:float, timer_id:?string, sink_path:string, compression:?string, max_bytes:int, max_wait_seconds:int}
+     * @param array{driver:\App\Sink\SinkDriver, sink:array<string, mixed>, batch_max_bytes:int, batch_max_wait_seconds:int} $output
+     * @return array{handle:Amp\File\File, path:string, size:int, last_append_at:float, timer_id:?string, sink:array<string, mixed>, driver:\App\Sink\SinkDriver, max_bytes:int, max_wait_seconds:int}
      */
     private function createBufferState(array $output): array
     {
@@ -291,8 +280,8 @@ final class Application
             'size' => 0,
             'last_append_at' => 0.0,
             'timer_id' => null,
-            'sink_path' => $output['path'],
-            'compression' => $output['compression'],
+            'sink' => $output['sink'],
+            'driver' => $output['driver'],
             'max_bytes' => $output['batch_max_bytes'],
             'max_wait_seconds' => $output['batch_max_wait_seconds'],
         ];
@@ -349,13 +338,13 @@ final class Application
         }
 
         $buffer['handle']->seek(0);
-        $writer = $this->openSinkWriter($buffer['sink_path'], $buffer['compression']);
+        $writer = $buffer['driver']->openWriter($buffer['sink']);
         try {
             while (($chunk = $buffer['handle']->read()) !== null) {
-                $this->writeToSinkWriter($writer, $chunk);
+                $writer->write($chunk);
             }
         } finally {
-            $this->closeSinkWriter($writer);
+            $writer->close();
             $buffer['handle']->close();
             $this->safeUnlink($buffer['path']);
         }
@@ -366,8 +355,8 @@ final class Application
             'size' => 0,
             'last_append_at' => 0.0,
             'timer_id' => null,
-            'sink_path' => $buffer['sink_path'],
-            'compression' => $buffer['compression'],
+            'sink' => $buffer['sink'],
+            'driver' => $buffer['driver'],
             'max_bytes' => $buffer['max_bytes'],
             'max_wait_seconds' => $buffer['max_wait_seconds'],
         ];
@@ -395,157 +384,37 @@ final class Application
         }
     }
 
-    private function formatLine(string $line, string $format): ?string
-    {
-        if ($format === 'ndjson') {
-            return $line;
-        }
-
-        throw new RuntimeException("Unsupported sink format: {$format}");
-    }
-
     /**
-     * @return array{type:string, handle:mixed}
-     */
-    private function openSinkWriter(string $path, ?string $compression): array
-    {
-        if ($compression === 'gzip') {
-            if (!function_exists('gzopen')) {
-                throw new RuntimeException('gzip compression requires the zlib extension.');
-            }
-
-            $handle = gzopen($path, 'ab');
-            if ($handle === false) {
-                throw new RuntimeException("Failed to open gzip sink: {$path}");
-            }
-
-            return [
-                'type' => 'gzip',
-                'handle' => $handle,
-            ];
-        }
-
-        return [
-            'type' => 'file',
-            'handle' => File\openFile($path, 'a'),
-        ];
-    }
-
-    /**
-     * @param array{type:string, handle:mixed} $writer
-     */
-    private function writeToSinkWriter(array $writer, string $data): void
-    {
-        if ($writer['type'] === 'gzip') {
-            gzwrite($writer['handle'], $data);
-            return;
-        }
-
-        $writer['handle']->write($data);
-    }
-
-    /**
-     * @param array{type:string, handle:mixed} $writer
-     */
-    private function closeSinkWriter(array $writer): void
-    {
-        if ($writer['type'] === 'gzip') {
-            gzclose($writer['handle']);
-            return;
-        }
-
-        $writer['handle']->close();
-    }
-
-    /**
-     * @return array<string, array<int, array{path:string, format:string, compression:?string, batch_max_bytes:?int, batch_max_wait_seconds:?int}>>
+     * @return array<string, array<int, array<string, mixed>>>
      */
     private function buildSourceSinkMap(Config $config): array
     {
         $map = [];
 
         foreach ($config->sinks as $sink) {
-            $path = $sink['path'] ?? null;
-            if (!is_string($path) || $path === '') {
-                continue;
+            foreach ($sink['inputs'] as $input) {
+                $map[$input][] = $sink;
             }
-
-            $format = $sink['format'] ?? null;
-            if (!is_string($format) || $format === '') {
-                continue;
-            }
-
-            $compression = $sink['compression'] ?? null;
-            if ($compression !== null && !is_string($compression)) {
-                continue;
-            }
-
-            $batchMaxBytes = $sink['batch_max_bytes'] ?? null;
-            $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? null;
-            if (($batchMaxBytes === null) !== ($batchMaxWaitSeconds === null)) {
-                continue;
-            }
-
-            $inputs = $sink['inputs'] ?? [];
-            if (!is_array($inputs)) {
-                continue;
-            }
-
-            foreach ($inputs as $input) {
-                if (!is_string($input) || $input === '') {
-                    continue;
-                }
-
-                $map[$input][] = [
-                    'path' => $path,
-                    'format' => $format,
-                    'compression' => $compression,
-                    'batch_max_bytes' => $batchMaxBytes,
-                    'batch_max_wait_seconds' => $batchMaxWaitSeconds,
-                ];
-            }
-        }
-
-        foreach ($map as $sourceId => $paths) {
-            $unique = [];
-            foreach ($paths as $sink) {
-                $key =
-                    $sink['path']
-                    . '|'
-                    . $sink['format']
-                    . '|'
-                    . ($sink['compression'] ?? '')
-                    . '|'
-                    . ($sink['batch_max_bytes'] ?? '')
-                    . '|'
-                    . ($sink['batch_max_wait_seconds'] ?? '');
-                $unique[$key] = $sink;
-            }
-            $map[$sourceId] = array_values($unique);
         }
 
         return $map;
     }
 
-    public function run(Config $config): void
+    public function run(): void
     {
-        if ($config->sinks === []) {
+        if ($this->config->sinks === []) {
             throw new RuntimeException('No sinks configured');
         }
 
-        $sourceToSinks = $this->buildSourceSinkMap($config);
+        $sourceToSinks = $this->buildSourceSinkMap($this->config);
         if ($sourceToSinks === []) {
             throw new RuntimeException('No sources connected to sinks');
         }
 
         $fileSources = [];
 
-        foreach ($config->sources as $id => $source) {
+        foreach ($this->config->sources as $id => $source) {
             if (!array_key_exists($id, $sourceToSinks)) {
-                continue;
-            }
-
-            if (($source['type'] ?? null) !== 'file') {
                 continue;
             }
 

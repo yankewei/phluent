@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Amp\File\Driver\BlockingFilesystemDriver;
+use App\Application;
 use PHPUnit\Framework\TestCase;
 
 use function Amp\File\filesystem;
@@ -27,6 +28,7 @@ final class ApplicationBatchProcessingTest extends TestCase
             TestFilesystem::writeFile($outputPath, '');
 
             $sinks = [[
+                'type' => 'file',
                 'path' => $outputPath,
                 'format' => 'ndjson',
                 'compression' => null,
@@ -34,7 +36,8 @@ final class ApplicationBatchProcessingTest extends TestCase
                 'batch_max_wait_seconds' => 60,
             ]];
 
-            $app = new Application();
+            $config = ConfigFactory::loadValidConfig($baseDir);
+            $app = new Application($config);
             ApplicationRunner::enqueueRead($app, $inputPath, null, $sinks);
 
             $expected = TestFilesystem::readFile(TestFilesystem::fixturePath('expected/core.ndjson'));
