@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Config;
 use PHPUnit\Framework\TestCase;
 
 final class ConfigBatchSettingsTest extends TestCase

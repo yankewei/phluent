@@ -2,37 +2,56 @@
 
 declare(strict_types=1);
 
+use App\Application;
+use App\Sink\FileSinkDriver;
+use App\Sink\SinkWriter;
 use PHPUnit\Framework\TestCase;
 
 final class ApplicationWriteLineTest extends TestCase
 {
     public function testWriteLineSkipsOversizedLine(): void
     {
-        $app = new Application();
-        $writer = new class {
-            public string $data = '';
+        $baseDir = TestFilesystem::createTempDir();
 
-            public function write(string $data): void
-            {
-                $this->data .= $data;
-            }
-        };
+        try {
+            $config = ConfigFactory::loadValidConfig($baseDir);
+            $app = new Application($config);
+            $writer = new class implements SinkWriter {
+                public string $data = '';
 
-        $outputs = [[
-            'writer' => [
-                'type' => 'file',
-                'handle' => $writer,
-            ],
-            'format' => 'ndjson',
-        ]];
+                public function write(string $data): void
+                {
+                    $this->data .= $data;
+                }
 
-        $method = new ReflectionMethod($app, 'writeLine');
-        $method->setAccessible(true);
+                public function close(): void
+                {
+                }
+            };
 
-        $method->invoke($app, $outputs, "123456\n", 5);
-        $this->assertSame('', $writer->data);
+            $outputs = [[
+                'driver' => new FileSinkDriver(),
+                'sink' => [
+                    'type' => 'file',
+                    'path' => $baseDir . '/output/result.ndjson',
+                    'format' => 'ndjson',
+                    'compression' => null,
+                ],
+                'writer' => $writer,
+                'batch_max_bytes' => null,
+                'batch_max_wait_seconds' => null,
+            ]];
 
-        $method->invoke($app, $outputs, "1234\n", 5);
-        $this->assertSame("1234\n", $writer->data);
+            $method = new ReflectionMethod($app, 'writeLine');
+            $method->setAccessible(true);
+
+            $method->invoke($app, $outputs, "123456\n", 5);
+            $this->assertSame('', $writer->data);
+
+            $method->invoke($app, $outputs, "1234\n", 5);
+            $this->assertSame("1234\n", $writer->data);
+        } finally {
+            TestFilesystem::removeDir($baseDir);
+        }
     }
 }

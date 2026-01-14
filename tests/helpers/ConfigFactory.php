@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Config;
+
 final class ConfigFactory
 {
     public static function writeConfigFromFixture(string $fixtureRelative, string $dir, string $filename = 'config.toml'): string
@@ -18,5 +20,11 @@ final class ConfigFactory
         TestFilesystem::writeFile($path, $contents);
 
         return $path;
+    }
+
+    public static function loadValidConfig(string $dir, string $filename = 'config.toml'): Config
+    {
+        $path = self::writeConfigFromFixture('configs/valid.toml', $dir, $filename);
+        return Config::load($path);
     }
 }

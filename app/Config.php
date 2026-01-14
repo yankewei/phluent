@@ -2,24 +2,73 @@
 
 declare(strict_types=1);
 
+namespace App;
+
 use Devium\Toml\Toml;
 use Devium\Toml\TomlError;
 use Respect\Validation\Exceptions\NestedValidationException;
 use Respect\Validation\Validator;
+use RuntimeException;
 
 final class Config
 {
     /**
-     * @var array<string, array<string, mixed>>
+     * Validated and normalized source config entries from Config::load().
+     *
+     * @var array<string, array{
+     *   type:string,
+     *   dir:string,
+     *   max_bytes:?int
+     * }>
      */
-    public array $sources = [];
+    public readonly array $sources;
 
     /**
-     * @var array<string, array<string, mixed>>
+     * Validated and normalized sink config entries from Config::load().
+     *
+     * @var array<string, array{
+     *   type:string,
+     *   dir:string,
+     *   inputs:array<int, string>,
+     *   prefix?:string,
+     *   format:string,
+     *   compression?:?string,
+     *   batch?:?array{max_bytes:int, max_wait_seconds:int},
+     *   path:string,
+     *   batch_max_bytes:?int,
+     *   batch_max_wait_seconds:?int,
+     *   buffer_enabled:bool
+     * }>
      */
-    public array $sinks = [];
+    public readonly array $sinks;
 
-    public string $baseDir;
+    /**
+     * Base directory used to resolve relative paths from the config file location.
+     */
+    public readonly string $baseDir;
+
+    /**
+     * @param array<string, array{type:string, dir:string, max_bytes:?int}> $sources
+     * @param array<string, array{
+     *   type:string,
+     *   dir:string,
+     *   inputs:array<int, string>,
+     *   prefix?:string,
+     *   format:string,
+     *   compression?:?string,
+     *   batch?:?array{max_bytes:int, max_wait_seconds:int},
+     *   path:string,
+     *   batch_max_bytes:?int,
+     *   batch_max_wait_seconds:?int,
+     *   buffer_enabled:bool
+     * }> $sinks
+     */
+    private function __construct(array $sources, array $sinks, string $baseDir)
+    {
+        $this->sources = $sources;
+        $this->sinks = $sinks;
+        $this->baseDir = $baseDir;
+    }
 
     public static function load(string $path): self
     {
@@ -44,12 +93,11 @@ final class Config
         self::assertSchema($sources, self::sourcesSchema(), 'sources');
         self::assertSchema($sinks, self::sinksSchema(), 'sinks');
 
-        $config = new self();
-        $config->baseDir = dirname($path);
-        $config->sources = self::normalizeSources($sources, $config->baseDir);
-        $config->sinks = self::normalizeSinks($sinks, $config->sources, $config->baseDir);
+        $baseDir = dirname($path);
+        $normalizedSources = self::normalizeSources($sources, $baseDir);
+        $normalizedSinks = self::normalizeSinks($sinks, $normalizedSources, $baseDir);
 
-        return $config;
+        return new self($normalizedSources, $normalizedSinks, $baseDir);
     }
 
     private static function assertSchema(array $value, Validator $validator, string $path): void

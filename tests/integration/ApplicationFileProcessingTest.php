@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use App\Application;
+use App\Sink\FileSinkDriver;
+use App\Sink\SinkWriter;
 use PHPUnit\Framework\TestCase;
 
 final class ApplicationFileProcessingTest extends TestCase
@@ -21,26 +24,36 @@ final class ApplicationFileProcessingTest extends TestCase
             $outputHandle = fopen($outputPath, 'ab');
             $this->assertNotFalse($outputHandle);
 
-            $writer = new class ($outputHandle) {
+            $writer = new class ($outputHandle) implements SinkWriter {
                 public function __construct(private $handle) {}
 
                 public function write(string $data): void
                 {
                     fwrite($this->handle, $data);
                 }
+
+                public function close(): void
+                {
+                }
             };
 
             $outputs = [[
-                'writer' => [
+                'driver' => new FileSinkDriver(),
+                'sink' => [
                     'type' => 'file',
-                    'handle' => $writer,
+                    'path' => $outputPath,
+                    'format' => 'ndjson',
+                    'compression' => null,
                 ],
-                'format' => 'ndjson',
+                'writer' => $writer,
+                'batch_max_bytes' => null,
+                'batch_max_wait_seconds' => null,
             ]];
 
             $contents = TestFilesystem::readFile($inputPath);
             $lines = preg_split('/(?<=\\n)/', $contents, -1, PREG_SPLIT_NO_EMPTY);
-            $app = new Application();
+            $config = ConfigFactory::loadValidConfig($baseDir);
+            $app = new Application($config);
             $method = new ReflectionMethod($app, 'writeLine');
             $method->setAccessible(true);
 

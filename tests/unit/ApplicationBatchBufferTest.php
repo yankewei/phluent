@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use Amp\File\Driver\BlockingFilesystemDriver;
+use App\Application;
+use App\Sink\FileSinkDriver;
 use PHPUnit\Framework\TestCase;
 use Revolt\EventLoop;
 
@@ -22,15 +24,24 @@ final class ApplicationBatchBufferTest extends TestCase
         $outputPath = $baseDir . '/output/result.ndjson';
         TestFilesystem::writeFile($outputPath, '');
 
-        $app = new Application();
+        $config = ConfigFactory::loadValidConfig($baseDir);
+        $app = new Application($config);
         $method = new ReflectionMethod($app, 'bufferLine');
         $method->setAccessible(true);
 
-        $output = [
-            'writer' => null,
-            'format' => 'ndjson',
+        $driver = new FileSinkDriver();
+        $sink = [
+            'type' => 'file',
             'path' => $outputPath,
+            'format' => 'ndjson',
             'compression' => null,
+            'batch_max_bytes' => 5,
+            'batch_max_wait_seconds' => 60,
+        ];
+        $output = [
+            'driver' => $driver,
+            'sink' => $sink,
+            'writer' => null,
             'batch_max_bytes' => 5,
             'batch_max_wait_seconds' => 60,
         ];
@@ -38,7 +49,8 @@ final class ApplicationBatchBufferTest extends TestCase
         $method->invoke($app, $output, "hi\n");
 
         $buffers = $this->getBuffers($app);
-        $bufferPath = $buffers[$outputPath]['path'];
+        $sinkKey = $driver->uniqueKey($sink);
+        $bufferPath = $buffers[$sinkKey]['path'];
         $this->assertNotNull($bufferPath);
         $this->assertFileExists($bufferPath);
 
@@ -48,9 +60,9 @@ final class ApplicationBatchBufferTest extends TestCase
         $this->assertFileDoesNotExist($bufferPath);
 
         $buffers = $this->getBuffers($app);
-        $this->assertSame(0, $buffers[$outputPath]['size']);
-        $this->assertNull($buffers[$outputPath]['handle']);
-        $this->assertNull($buffers[$outputPath]['path']);
+        $this->assertSame(0, $buffers[$sinkKey]['size']);
+        $this->assertNull($buffers[$sinkKey]['handle']);
+        $this->assertNull($buffers[$sinkKey]['path']);
 
         TestFilesystem::removeDir($baseDir);
     }
@@ -61,15 +73,24 @@ final class ApplicationBatchBufferTest extends TestCase
         $outputPath = $baseDir . '/output/result.ndjson';
         TestFilesystem::writeFile($outputPath, '');
 
-        $app = new Application();
+        $config = ConfigFactory::loadValidConfig($baseDir);
+        $app = new Application($config);
         $method = new ReflectionMethod($app, 'bufferLine');
         $method->setAccessible(true);
 
-        $output = [
-            'writer' => null,
-            'format' => 'ndjson',
+        $driver = new FileSinkDriver();
+        $sink = [
+            'type' => 'file',
             'path' => $outputPath,
+            'format' => 'ndjson',
             'compression' => null,
+            'batch_max_bytes' => 1024,
+            'batch_max_wait_seconds' => 1,
+        ];
+        $output = [
+            'driver' => $driver,
+            'sink' => $sink,
+            'writer' => null,
             'batch_max_bytes' => 1024,
             'batch_max_wait_seconds' => 1,
         ];
@@ -87,7 +108,7 @@ final class ApplicationBatchBufferTest extends TestCase
     }
 
     /**
-     * @return array<string, array{handle:?Amp\File\File, path:?string, size:int, last_append_at:float, timer_id:?string, sink_path:string, compression:?string, max_bytes:int, max_wait_seconds:int}>
+     * @return array<string, array{handle:?Amp\File\File, path:?string, size:int, last_append_at:float, timer_id:?string, sink:array<string, mixed>, driver:\App\Sink\SinkDriver, max_bytes:int, max_wait_seconds:int}>
      */
     private function getBuffers(Application $app): array
     {
