@@ -56,7 +56,7 @@ final class SinkDriverRegistryTest extends TestCase
 
         ExceptionAssertions::assertRuntimeExceptionMessageContains(
             $this,
-            fn () => $registry->get('missing'),
+            static fn() => $registry->get('missing'),
             'Unsupported sink type',
         );
     }

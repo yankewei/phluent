@@ -93,13 +93,7 @@ final class S3SinkDriver implements SinkDriver
         $contentType = $this->contentTypeForFormat((string) $format);
         $contentEncoding = $compression === 'gzip' ? 'gzip' : null;
 
-        return new S3SinkWriter(
-            $this->getClient($sink),
-            $bucket,
-            $key,
-            $contentType,
-            $contentEncoding,
-        );
+        return new S3SinkWriter($this->getClient($sink), $bucket, $key, $contentType, $contentEncoding);
     }
 
     private function getClient(array $sink): S3Client

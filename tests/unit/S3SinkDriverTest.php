@@ -22,7 +22,7 @@ final class S3SinkDriverTest extends TestCase
             'handler' => $mock,
         ]);
 
-        $driver = new S3SinkDriver(static fn () => $client);
+        $driver = new S3SinkDriver(static fn() => $client);
 
         $writer = $driver->openWriter([
             'bucket' => 'demo-bucket',
@@ -33,7 +33,7 @@ final class S3SinkDriverTest extends TestCase
             'batch_max_wait_seconds' => null,
         ]);
         $this->assertInstanceOf(S3SinkWriter::class, $writer);
-        $tempPath = (new ReflectionClass($writer))->getProperty('path');
+        $tempPath = new ReflectionClass($writer)->getProperty('path');
         $tempPath->setAccessible(true);
         $pathValue = $tempPath->getValue($writer);
         $writer->write("hello\n");
@@ -46,10 +46,7 @@ final class S3SinkDriverTest extends TestCase
         $this->assertSame('demo-bucket', $params['Bucket']);
         $this->assertSame('application/x-ndjson', $params['ContentType']);
         $this->assertArrayHasKey('Key', $params);
-        $this->assertMatchesRegularExpression(
-            '/^logs-\\d{8}-\\d{6}-[a-f0-9]{6}\\.ndjson$/',
-            $params['Key'],
-        );
+        $this->assertMatchesRegularExpression('/^logs-\\d{8}-\\d{6}-[a-f0-9]{6}\\.ndjson$/', $params['Key']);
         $this->assertFalse(file_exists($pathValue));
     }
 
@@ -67,7 +64,7 @@ final class S3SinkDriverTest extends TestCase
             'handler' => $mock,
         ]);
 
-        $driver = new S3SinkDriver(static fn () => $client);
+        $driver = new S3SinkDriver(static fn() => $client);
 
         $writer = $driver->openWriter([
             'bucket' => 'demo-bucket',
@@ -78,7 +75,7 @@ final class S3SinkDriverTest extends TestCase
             'batch_max_wait_seconds' => null,
         ]);
         $this->assertInstanceOf(S3SinkWriter::class, $writer);
-        $tempPath = (new ReflectionClass($writer))->getProperty('path');
+        $tempPath = new ReflectionClass($writer)->getProperty('path');
         $tempPath->setAccessible(true);
         $pathValue = $tempPath->getValue($writer);
         $writer->write("hello\n");
@@ -92,10 +89,7 @@ final class S3SinkDriverTest extends TestCase
         $this->assertSame('application/x-ndjson', $params['ContentType']);
         $this->assertSame('gzip', $params['ContentEncoding']);
         $this->assertArrayHasKey('Key', $params);
-        $this->assertMatchesRegularExpression(
-            '/^logs-\\d{8}-\\d{6}-[a-f0-9]{6}\\.ndjson\\.gz$/',
-            $params['Key'],
-        );
+        $this->assertMatchesRegularExpression('/^logs-\\d{8}-\\d{6}-[a-f0-9]{6}\\.ndjson\\.gz$/', $params['Key']);
         $this->assertFalse(file_exists($pathValue));
     }
 }

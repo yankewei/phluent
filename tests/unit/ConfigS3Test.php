@@ -11,21 +11,21 @@ final class ConfigS3Test extends TestCase
     {
         $baseDir = TestFilesystem::createTempDir();
         $contents = <<<TOML
-[sources.main]
-type = "file"
-dir = "input"
+        [sources.main]
+        type = "file"
+        dir = "input"
 
-[sinks.main]
-type = "s3"
-inputs = ["main"]
-TOML;
+        [sinks.main]
+        type = "s3"
+        inputs = ["main"]
+        TOML;
 
         try {
             $configPath = ConfigFactory::writeConfig($contents, $baseDir, 'missing-bucket.toml');
 
             ExceptionAssertions::assertRuntimeExceptionMessageContains(
                 $this,
-                fn (): Config => Config::load($configPath),
+                static fn(): Config => Config::load($configPath),
                 'bucket is required',
             );
         } finally {
@@ -37,15 +37,15 @@ TOML;
     {
         $baseDir = TestFilesystem::createTempDir();
         $contents = <<<TOML
-[sources.main]
-type = "file"
-dir = "input"
+        [sources.main]
+        type = "file"
+        dir = "input"
 
-[sinks.main]
-type = "s3"
-bucket = "example"
-inputs = ["main"]
-TOML;
+        [sinks.main]
+        type = "s3"
+        bucket = "example"
+        inputs = ["main"]
+        TOML;
 
         try {
             $configPath = ConfigFactory::writeConfig($contents, $baseDir, 'default-path-style.toml');

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App;
 
-use App\Sink\SinkDriverRegistry;
 use Amp\File;
+use App\Sink\SinkDriverRegistry;
 use Revolt\EventLoop;
 use RuntimeException;
 
@@ -13,6 +13,9 @@ use function Amp\async;
 
 final class Application
 {
+    private const DEFAULT_DONE_SUFFIX = '.done';
+    private const DEFAULT_POLL_INTERVAL_SECONDS = 1.0;
+
     /**
      * @var array<string, array{dev:int, ino:int, offset:int}>
      */
@@ -35,8 +38,10 @@ final class Application
 
     private SinkDriverRegistry $sinkDrivers;
 
-    public function __construct(protected Config $config, ?SinkDriverRegistry $sinkDrivers = null)
-    {
+    public function __construct(
+        protected Config $config,
+        ?SinkDriverRegistry $sinkDrivers = null,
+    ) {
         $this->sinkDrivers = $sinkDrivers ?? SinkDriverRegistry::withDefaults();
     }
 
@@ -121,9 +126,11 @@ final class Application
                 } catch (Throwable) {
                     $input->close();
                     foreach ($outputs as $output) {
-                        if ($output['writer'] !== null) {
-                            $output['writer']->close();
+                        if ($output['writer'] === null) {
+                            continue;
                         }
+
+                        $output['writer']->close();
                     }
                     return;
                 }
@@ -153,9 +160,11 @@ final class Application
 
             $input->close();
             foreach ($outputs as $output) {
-                if ($output['writer'] !== null) {
-                    $output['writer']->close();
+                if ($output['writer'] === null) {
+                    continue;
                 }
+
+                $output['writer']->close();
             }
 
             $this->fileStates[$filePath] = [
@@ -180,7 +189,7 @@ final class Application
 
     private function getFileStat(string $path): ?array
     {
-        $previous = set_error_handler(function (int $type, string $message): void {
+        $previous = set_error_handler(static function (int $type, string $message): void {
             throw new RuntimeException($message);
         });
 
@@ -425,10 +434,26 @@ final class Application
             throw new RuntimeException('No file sources configured');
         }
 
+        if ($this->supportsInotify()) {
+            $this->runWithInotify($fileSources, $sourceToSinks);
+            return;
+        }
+
+        $this->runWithPolling($fileSources, $sourceToSinks);
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $fileSources
+     * @param array<string, array<int, array<string, mixed>>> $sourceToSinks
+     */
+    private function runWithInotify(array $fileSources, array $sourceToSinks): void
+    {
         $fd = inotify_init();
 
         if ($fd === false) {
-            throw new RuntimeException('Init inotify failed');
+            $this->debug('Init inotify failed, falling back to polling');
+            $this->runWithPolling($fileSources, $sourceToSinks);
+            return;
         }
 
         stream_set_blocking($fd, false);
@@ -479,5 +504,64 @@ final class Application
         });
 
         EventLoop::run();
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $fileSources
+     * @param array<string, array<int, array<string, mixed>>> $sourceToSinks
+     */
+    private function runWithPolling(array $fileSources, array $sourceToSinks): void
+    {
+        $fileContexts = [];
+
+        foreach ($fileSources as $id => $source) {
+            $watchDir = $source['dir'] ?? '';
+            if (!is_string($watchDir) || $watchDir === '') {
+                throw new RuntimeException("Watch directory missing for source: {$id}");
+            }
+
+            if (!is_dir($watchDir)) {
+                throw new RuntimeException("Watch directory not found: {$watchDir}");
+            }
+
+            $maxBytes = $source['max_bytes'] ?? null;
+            $doneSuffix = $source['done_suffix'] ?? self::DEFAULT_DONE_SUFFIX;
+
+            if (!is_string($doneSuffix) || $doneSuffix === '') {
+                $doneSuffix = self::DEFAULT_DONE_SUFFIX;
+            }
+
+            $fileContexts[] = [
+                'dir' => $watchDir,
+                'max_bytes' => is_int($maxBytes) ? $maxBytes : null,
+                'sinks' => $sourceToSinks[$id],
+                'done_suffix' => $doneSuffix,
+            ];
+        }
+
+        $poll = function (string $callbackId) use ($fileContexts): void {
+            foreach ($fileContexts as $context) {
+                $iterator = new \FilesystemIterator($context['dir'], \FilesystemIterator::SKIP_DOTS);
+                foreach ($iterator as $entry) {
+                    if (!$entry->isFile()) {
+                        continue;
+                    }
+                    $name = $entry->getFilename();
+                    if (!str_ends_with($name, $context['done_suffix'])) {
+                        continue;
+                    }
+                    $this->enqueueRead($entry->getPathname(), $context['max_bytes'], $context['sinks']);
+                }
+            }
+        };
+
+        EventLoop::defer($poll);
+        EventLoop::repeat(self::DEFAULT_POLL_INTERVAL_SECONDS, $poll);
+        EventLoop::run();
+    }
+
+    private function supportsInotify(): bool
+    {
+        return PHP_OS_FAMILY === 'Linux' && extension_loaded('inotify');
     }
 }

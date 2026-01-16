@@ -18,7 +18,8 @@ final class Config
      * @var array<string, array{
      *   type:string,
      *   dir:string,
-     *   max_bytes:?int
+     *   max_bytes:?int,
+     *   done_suffix?:string
      * }>
      */
     public readonly array $sources;
@@ -53,7 +54,7 @@ final class Config
     public readonly string $baseDir;
 
     /**
-     * @param array<string, array{type:string, dir:string, max_bytes:?int}> $sources
+     * @param array<string, array{type:string, dir:string, max_bytes:?int, done_suffix?:string}> $sources
      * @param array<string, array{
      *   type:string,
      *   inputs:array<int, string>,
@@ -130,6 +131,7 @@ final class Config
             Validator::key('type', Validator::stringType()->notEmpty()->equals('file')),
             Validator::key('dir', Validator::stringType()->notEmpty()),
             Validator::key('max_bytes', Validator::intType()->positive(), false),
+            Validator::key('done_suffix', Validator::stringType()->notEmpty(), false),
         );
     }
 
@@ -259,9 +261,11 @@ final class Config
             $inputs = $sink['inputs'];
 
             foreach ($inputs as $inputId) {
-                if (!array_key_exists($inputId, $sources)) {
-                    throw new RuntimeException("Unknown source referenced by sinks.{$id}.inputs: {$inputId}");
+                if (array_key_exists($inputId, $sources)) {
+                    continue;
                 }
+
+                throw new RuntimeException("Unknown source referenced by sinks.{$id}.inputs: {$inputId}");
             }
 
             $normalized[$id] = $sink;

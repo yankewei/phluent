@@ -11,25 +11,25 @@ final class ConfigBatchSettingsTest extends TestCase
     {
         $baseDir = TestFilesystem::createTempDir();
         $contents = <<<TOML
-[sources.main]
-type = "file"
-dir = "input"
+        [sources.main]
+        type = "file"
+        dir = "input"
 
-[sinks.main]
-type = "file"
-dir = "output"
-inputs = ["main"]
+        [sinks.main]
+        type = "file"
+        dir = "output"
+        inputs = ["main"]
 
-[sinks.main.batch]
-max_bytes = 1024
-TOML;
+        [sinks.main.batch]
+        max_bytes = 1024
+        TOML;
 
         try {
             $configPath = ConfigFactory::writeConfig($contents, $baseDir, 'bad-batch.toml');
 
             ExceptionAssertions::assertRuntimeExceptionMessageContains(
                 $this,
-                fn (): Config => Config::load($configPath),
+                static fn(): Config => Config::load($configPath),
                 'Invalid config at sinks',
             );
         } finally {
@@ -41,19 +41,19 @@ TOML;
     {
         $baseDir = TestFilesystem::createTempDir();
         $contents = <<<TOML
-[sources.main]
-type = "file"
-dir = "input"
+        [sources.main]
+        type = "file"
+        dir = "input"
 
-[sinks.main]
-type = "file"
-dir = "output"
-inputs = ["main"]
+        [sinks.main]
+        type = "file"
+        dir = "output"
+        inputs = ["main"]
 
-[sinks.main.batch]
-max_bytes = 1024
-max_wait_seconds = 5
-TOML;
+        [sinks.main.batch]
+        max_bytes = 1024
+        max_wait_seconds = 5
+        TOML;
 
         try {
             $configPath = ConfigFactory::writeConfig($contents, $baseDir, 'batch.toml');

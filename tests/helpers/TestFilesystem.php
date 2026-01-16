@@ -9,7 +9,7 @@ final class TestFilesystem
         $base = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR);
         $path = $base . DIRECTORY_SEPARATOR . $prefix . bin2hex(random_bytes(4));
 
-        if (!mkdir($path, 0777, true) && !is_dir($path)) {
+        if (!mkdir($path, 0o777, true) && !is_dir($path)) {
             throw new RuntimeException("Failed to create temp dir: {$path}");
         }
 
@@ -19,7 +19,7 @@ final class TestFilesystem
     public static function writeFile(string $path, string $contents): void
     {
         $dir = dirname($path);
-        if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
+        if (!is_dir($dir) && !mkdir($dir, 0o777, true) && !is_dir($dir)) {
             throw new RuntimeException("Failed to create directory: {$dir}");
         }
 

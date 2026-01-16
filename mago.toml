@@ -4,9 +4,9 @@ php-version = "8.5.0"
 
 [source]
 workspace = "."
-paths = ["src/"]
-includes = ["vendor"]
-excludes = []
+paths = [""]
+includes = [""]
+excludes = ["vendor"]
 
 [formatter]
 print-width = 120

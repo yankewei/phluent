@@ -11,17 +11,17 @@ final class ConfigPathTest extends TestCase
     {
         $baseDir = TestFilesystem::createTempDir();
         $contents = <<<TOML
-[sources.main]
-type = "file"
-dir = "input"
+        [sources.main]
+        type = "file"
+        dir = "input"
 
-[sinks.main]
-type = "file"
-dir = "output"
-prefix = "app"
-format = "ndjson"
-inputs = ["main"]
-TOML;
+        [sinks.main]
+        type = "file"
+        dir = "output"
+        prefix = "app"
+        format = "ndjson"
+        inputs = ["main"]
+        TOML;
 
         try {
             $configPath = ConfigFactory::writeConfig($contents, $baseDir, 'paths.toml');

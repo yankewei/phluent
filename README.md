@@ -2,12 +2,12 @@
 Phluent is a lightweight file and log aggregation agent written in PHP.
 
 ## Features
-- Watches a directory with inotify for new or updated files.
+- Watches a directory with inotify when available (Linux), with polling fallback on other platforms.
 - Reads incoming files asynchronously using amphp.
 
 ## Requirements
-- PHP 8.5 (see `Dockerfile` and `mago.toml`) with the `inotify` extension.
-- Linux (inotify is Linux-only).
+- PHP 8.5 (see `Dockerfile` and `mago.toml`). The `inotify` extension is optional and used when available.
+- Linux for inotify; macOS uses polling with `.done` files (see `done_suffix`).
 - Composer.
 
 ## Quick Start (Local)
@@ -18,7 +18,7 @@ chmod +x phluent
 ./phluent
 ```
 
-Drop or move files into `data` to trigger events. If you want to use a different
+Drop or move files into `data` to trigger events (use `.done` suffix when polling on macOS). If you want to use a different
 base path, pass `--config-file` (the watcher will look for `data/` under the config file's directory):
 
 ```bash
@@ -34,6 +34,7 @@ Example:
 type = "file"
 dir = "data"
 max_bytes = 10485760
+done_suffix = ".done"
 
 [sinks.laravel]
 type = "file"
@@ -67,6 +68,7 @@ secret_access_key = "EXAMPLE_SECRET_KEY"
 ```
 
 Notes:
+- `done_suffix` is used only when polling (e.g., macOS). Files ending with the suffix are treated as ready for ingestion.
 - Each file sink writes to a uniquely named file under `dir`.
 - Output naming: `[prefix-]YYYYMMDD-HHMMSS-random.ndjson[.gz]` (S3 uses the same pattern for object keys).
 - `compression = "gzip"` requires the PHP `zlib` extension.
@@ -109,4 +111,4 @@ composer test
 
 ## Notes
 The current script reads file contents but does not yet ship them anywhere. Extend the
-event handler in `src/Application.php` to parse or forward the data as needed.
+event handler in `app/Application.php` to parse or forward the data as needed.
