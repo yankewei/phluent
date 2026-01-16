@@ -24,8 +24,10 @@ final class ApplicationFileProcessingTest extends TestCase
             $outputHandle = fopen($outputPath, 'ab');
             $this->assertNotFalse($outputHandle);
 
-            $writer = new class ($outputHandle) implements SinkWriter {
-                public function __construct(private $handle) {}
+            $writer = new class($outputHandle) implements SinkWriter {
+                public function __construct(
+                    private $handle,
+                ) {}
 
                 public function write(string $data): void
                 {

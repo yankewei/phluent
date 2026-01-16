@@ -64,7 +64,7 @@ final class FileSinkDriverTest extends TestCase
 
         ExceptionAssertions::assertRuntimeExceptionMessageContains(
             $this,
-            fn () => $driver->formatLine("line\n", ['format' => 'csv']),
+            static fn() => $driver->formatLine("line\n", ['format' => 'csv']),
             'Unsupported sink format',
         );
     }

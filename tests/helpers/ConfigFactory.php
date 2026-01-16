@@ -6,8 +6,11 @@ use App\Config;
 
 final class ConfigFactory
 {
-    public static function writeConfigFromFixture(string $fixtureRelative, string $dir, string $filename = 'config.toml'): string
-    {
+    public static function writeConfigFromFixture(
+        string $fixtureRelative,
+        string $dir,
+        string $filename = 'config.toml',
+    ): string {
         $path = rtrim($dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename;
         TestFilesystem::copyFixture($fixtureRelative, $path);
 

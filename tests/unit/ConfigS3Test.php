@@ -5,9 +5,9 @@ declare(strict_types=1);
 use App\Config;
 use PHPUnit\Framework\TestCase;
 
-final class ConfigBatchSettingsTest extends TestCase
+final class ConfigS3Test extends TestCase
 {
-    public function testBatchSettingsRequirePair(): void
+    public function testS3SinkRequiresBucket(): void
     {
         $baseDir = TestFilesystem::createTempDir();
         $contents = <<<TOML
@@ -16,28 +16,24 @@ final class ConfigBatchSettingsTest extends TestCase
         dir = "input"
 
         [sinks.main]
-        type = "file"
-        dir = "output"
+        type = "s3"
         inputs = ["main"]
-
-        [sinks.main.batch]
-        max_bytes = 1024
         TOML;
 
         try {
-            $configPath = ConfigFactory::writeConfig($contents, $baseDir, 'bad-batch.toml');
+            $configPath = ConfigFactory::writeConfig($contents, $baseDir, 'missing-bucket.toml');
 
             ExceptionAssertions::assertRuntimeExceptionMessageContains(
                 $this,
                 static fn(): Config => Config::load($configPath),
-                'Invalid config at sinks',
+                'bucket is required',
             );
         } finally {
             TestFilesystem::removeDir($baseDir);
         }
     }
 
-    public function testBatchSettingsLoadSuccessfully(): void
+    public function testS3DefaultsPathStyleToFalse(): void
     {
         $baseDir = TestFilesystem::createTempDir();
         $contents = <<<TOML
@@ -46,22 +42,16 @@ final class ConfigBatchSettingsTest extends TestCase
         dir = "input"
 
         [sinks.main]
-        type = "file"
-        dir = "output"
+        type = "s3"
+        bucket = "example"
         inputs = ["main"]
-
-        [sinks.main.batch]
-        max_bytes = 1024
-        max_wait_seconds = 5
         TOML;
 
         try {
-            $configPath = ConfigFactory::writeConfig($contents, $baseDir, 'batch.toml');
+            $configPath = ConfigFactory::writeConfig($contents, $baseDir, 'default-path-style.toml');
 
             $config = Config::load($configPath);
-            $this->assertSame(1024, $config->sinks['main']['batch_max_bytes']);
-            $this->assertSame(5, $config->sinks['main']['batch_max_wait_seconds']);
-            $this->assertTrue($config->sinks['main']['buffer_enabled']);
+            $this->assertFalse($config->sinks['main']['use_path_style_endpoint']);
         } finally {
             TestFilesystem::removeDir($baseDir);
         }

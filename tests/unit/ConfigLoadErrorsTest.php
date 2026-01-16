@@ -13,7 +13,7 @@ final class ConfigLoadErrorsTest extends TestCase
 
         ExceptionAssertions::assertRuntimeExceptionMessageContains(
             $this,
-            fn (): Config => Config::load($missingPath),
+            static fn(): Config => Config::load($missingPath),
             'Config file not found',
         );
     }
@@ -26,7 +26,7 @@ final class ConfigLoadErrorsTest extends TestCase
 
             ExceptionAssertions::assertRuntimeExceptionMessageContains(
                 $this,
-                fn (): Config => Config::load($configPath),
+                static fn(): Config => Config::load($configPath),
                 'Invalid TOML',
             );
         } finally {

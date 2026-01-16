@@ -22,15 +22,13 @@ final class FileSinkDriver implements SinkDriver
         $batchMaxBytes = $sink['batch_max_bytes'] ?? '';
         $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? '';
 
-        return $path
-            . '|'
-            . $format
-            . '|'
-            . $compression
-            . '|'
-            . $batchMaxBytes
-            . '|'
-            . $batchMaxWaitSeconds;
+        return hash('sha256', serialize([
+            'path' => $path,
+            'format' => $format,
+            'compression' => $compression,
+            'batch_max_bytes' => $batchMaxBytes,
+            'batch_max_wait_seconds' => $batchMaxWaitSeconds,
+        ]));
     }
 
     public function prepare(array $sink): void
