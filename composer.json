@@ -5,7 +5,8 @@
     "amphp/amp": "^3.1",
     "amphp/file": "^3.2",
     "devium/toml": "^1.0",
-    "respect/validation": "^2.3"
+    "respect/validation": "^2.3",
+    "aws/aws-sdk-php": "^3.0"
   },
   "autoload": {
     "psr-4": {

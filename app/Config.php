@@ -28,13 +28,18 @@ final class Config
      *
      * @var array<string, array{
      *   type:string,
-     *   dir:string,
      *   inputs:array<int, string>,
      *   prefix?:string,
      *   format:string,
      *   compression?:?string,
      *   batch?:?array{max_bytes:int, max_wait_seconds:int},
-     *   path:string,
+     *   path?:string,
+     *   dir?:string,
+     *   bucket?:string,
+     *   region?:?string,
+     *   endpoint?:?string,
+     *   use_path_style_endpoint?:bool,
+     *   credentials?:?array{access_key_id:string, secret_access_key:string, session_token?:string},
      *   batch_max_bytes:?int,
      *   batch_max_wait_seconds:?int,
      *   buffer_enabled:bool
@@ -51,13 +56,18 @@ final class Config
      * @param array<string, array{type:string, dir:string, max_bytes:?int}> $sources
      * @param array<string, array{
      *   type:string,
-     *   dir:string,
      *   inputs:array<int, string>,
      *   prefix?:string,
      *   format:string,
      *   compression?:?string,
      *   batch?:?array{max_bytes:int, max_wait_seconds:int},
-     *   path:string,
+     *   path?:string,
+     *   dir?:string,
+     *   bucket?:string,
+     *   region?:?string,
+     *   endpoint?:?string,
+     *   use_path_style_endpoint?:bool,
+     *   credentials?:?array{access_key_id:string, secret_access_key:string, session_token?:string},
      *   batch_max_bytes:?int,
      *   batch_max_wait_seconds:?int,
      *   buffer_enabled:bool
@@ -131,12 +141,25 @@ final class Config
     private static function sinkSchema(): Validator
     {
         return Validator::arrayType()->keySet(
-            Validator::key('type', Validator::stringType()->notEmpty()->equals('file')),
-            Validator::key('dir', Validator::stringType()->notEmpty()),
+            Validator::key('type', Validator::stringType()->notEmpty()->in(['file', 's3'])),
+            Validator::key('dir', Validator::stringType()->notEmpty(), false),
             Validator::key('inputs', Validator::arrayType()->notEmpty()->each(Validator::stringType()->notEmpty())),
             Validator::key('prefix', Validator::stringType()->notEmpty(), false),
             Validator::key('format', Validator::stringType()->notEmpty()->equals('ndjson'), false),
             Validator::key('compression', Validator::stringType()->notEmpty()->equals('gzip'), false),
+            Validator::key('bucket', Validator::stringType()->notEmpty(), false),
+            Validator::key('region', Validator::stringType()->notEmpty(), false),
+            Validator::key('endpoint', Validator::stringType()->notEmpty(), false),
+            Validator::key('use_path_style_endpoint', Validator::boolType(), false),
+            Validator::key(
+                'credentials',
+                Validator::arrayType()->keySet(
+                    Validator::key('access_key_id', Validator::stringType()->notEmpty()),
+                    Validator::key('secret_access_key', Validator::stringType()->notEmpty()),
+                    Validator::key('session_token', Validator::stringType()->notEmpty(), false),
+                ),
+                false,
+            ),
             Validator::key(
                 'batch',
                 Validator::arrayType()->keySet(
@@ -173,7 +196,14 @@ final class Config
         $normalized = [];
 
         foreach ($sinks as $id => $sink) {
-            $dir = self::resolvePath($sink['dir'], $baseDir);
+            $type = $sink['type'] ?? '';
+            if (!is_string($type) || $type === '') {
+                throw new RuntimeException("Invalid config at sinks.{$id}.type: type is required");
+            }
+            if ($type !== 'file' && $type !== 's3') {
+                throw new RuntimeException("Unsupported sink type: {$type}");
+            }
+
             $prefix = $sink['prefix'] ?? '';
             $format = $sink['format'] ?? 'ndjson';
             $compression = $sink['compression'] ?? null;
@@ -190,7 +220,41 @@ final class Config
                 }
             }
 
-            $sink['path'] = self::buildDatedUniquePath($dir, $prefix, $format, $compression);
+            if ($type === 'file') {
+                $dir = $sink['dir'] ?? '';
+                if (!is_string($dir) || $dir === '') {
+                    throw new RuntimeException("Invalid config at sinks.{$id}.dir: dir is required");
+                }
+                $resolvedDir = self::resolvePath($dir, $baseDir);
+                $sink['path'] = self::buildDatedUniquePath($resolvedDir, $prefix, $format, $compression);
+            }
+            if ($type === 's3') {
+                $bucket = $sink['bucket'] ?? '';
+                if (!is_string($bucket) || $bucket === '') {
+                    throw new RuntimeException("Invalid config at sinks.{$id}.bucket: bucket is required");
+                }
+                $sink['bucket'] = $bucket;
+                $region = $sink['region'] ?? null;
+                if ($region !== null && !is_string($region)) {
+                    throw new RuntimeException("Invalid config at sinks.{$id}.region: must be a string");
+                }
+                $sink['region'] = $region;
+                $endpoint = $sink['endpoint'] ?? null;
+                if ($endpoint !== null && !is_string($endpoint)) {
+                    throw new RuntimeException("Invalid config at sinks.{$id}.endpoint: must be a string");
+                }
+                $sink['endpoint'] = $endpoint;
+                $usePathStyle = $sink['use_path_style_endpoint'] ?? false;
+                if (!is_bool($usePathStyle)) {
+                    throw new RuntimeException("Invalid config at sinks.{$id}.use_path_style_endpoint: must be a bool");
+                }
+                $sink['use_path_style_endpoint'] = $usePathStyle;
+                $credentials = $sink['credentials'] ?? null;
+                if ($credentials !== null && !is_array($credentials)) {
+                    throw new RuntimeException("Invalid config at sinks.{$id}.credentials: must be a table");
+                }
+                $sink['credentials'] = $credentials;
+            }
             $sink['format'] = $format;
             $inputs = $sink['inputs'];
 
@@ -201,7 +265,7 @@ final class Config
             }
 
             $normalized[$id] = $sink;
-            $normalized[$id]['type'] = $sink['type'];
+            $normalized[$id]['type'] = $type;
             $normalized[$id]['inputs'] = $inputs;
             $normalized[$id]['format'] = $format;
             $normalized[$id]['compression'] = $compression;

@@ -27,6 +27,7 @@ final class SinkDriverRegistry
     {
         return new self([
             new FileSinkDriver(),
+            new S3SinkDriver(),
         ]);
     }
 
