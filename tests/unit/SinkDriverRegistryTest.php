@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-use App\Sink\SinkDriver;
+use App\Sink\Contract\SinkDriver;
 use App\Sink\SinkDriverRegistry;
-use App\Sink\SinkWriter;
+use App\Sink\Contract\SinkWriter;
 use PHPUnit\Framework\TestCase;
 
 final class SinkDriverRegistryTest extends TestCase

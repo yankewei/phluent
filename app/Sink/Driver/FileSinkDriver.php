@@ -2,9 +2,13 @@
 
 declare(strict_types=1);
 
-namespace App\Sink;
+namespace App\Sink\Driver;
 
 use Amp\File;
+use App\Sink\Contract\SinkDriver;
+use App\Sink\Contract\SinkWriter;
+use App\Sink\Writer\FileSinkWriter;
+use App\Sink\Writer\GzipSinkWriter;
 use RuntimeException;
 
 final class FileSinkDriver implements SinkDriver

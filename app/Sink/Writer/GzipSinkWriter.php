@@ -2,8 +2,9 @@
 
 declare(strict_types=1);
 
-namespace App\Sink;
+namespace App\Sink\Writer;
 
+use App\Sink\Contract\SinkWriter;
 use RuntimeException;
 
 final class GzipSinkWriter implements SinkWriter

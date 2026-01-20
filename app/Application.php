@@ -29,7 +29,7 @@ final class Application
      *   last_append_at:float,
      *   timer_id:?string,
      *   sink:array<string, mixed>,
-     *   driver:\App\Sink\SinkDriver,
+     *   driver:\App\Sink\Contract\SinkDriver,
      *   max_bytes:int,
      *   max_wait_seconds:int
      * }>
@@ -213,9 +213,9 @@ final class Application
 
     /**
      * @param array<int, array{
-     *   driver:\App\Sink\SinkDriver,
+     *   driver:\App\Sink\Contract\SinkDriver,
      *   sink:array<string, mixed>,
-     *   writer:?\App\Sink\SinkWriter,
+     *   writer:?\App\Sink\Contract\SinkWriter,
      *   batch_max_bytes:?int,
      *   batch_max_wait_seconds:?int
      * }> $outputs
@@ -248,7 +248,7 @@ final class Application
 
     /**
      * @param array{
-     *   driver:\App\Sink\SinkDriver,
+     *   driver:\App\Sink\Contract\SinkDriver,
      *   sink:array<string, mixed>,
      *   batch_max_bytes:int,
      *   batch_max_wait_seconds:int
@@ -275,8 +275,8 @@ final class Application
     }
 
     /**
-     * @param array{driver:\App\Sink\SinkDriver, sink:array<string, mixed>, batch_max_bytes:int, batch_max_wait_seconds:int} $output
-     * @return array{handle:Amp\File\File, path:string, size:int, last_append_at:float, timer_id:?string, sink:array<string, mixed>, driver:\App\Sink\SinkDriver, max_bytes:int, max_wait_seconds:int}
+     * @param array{driver:\App\Sink\Contract\SinkDriver, sink:array<string, mixed>, batch_max_bytes:int, batch_max_wait_seconds:int} $output
+     * @return array{handle:Amp\File\File, path:string, size:int, last_append_at:float, timer_id:?string, sink:array<string, mixed>, driver:\App\Sink\Contract\SinkDriver, max_bytes:int, max_wait_seconds:int}
      */
     private function createBufferState(array $output): array
     {

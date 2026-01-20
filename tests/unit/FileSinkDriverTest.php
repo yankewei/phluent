@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use Amp\File\Driver\BlockingFilesystemDriver;
-use App\Sink\FileSinkDriver;
+use App\Sink\Driver\FileSinkDriver;
 use PHPUnit\Framework\TestCase;
 
 use function Amp\File\filesystem;
