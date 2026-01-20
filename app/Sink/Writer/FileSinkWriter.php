@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace App\Sink;
+namespace App\Sink\Writer;
 
 use Amp\File;
+use App\Sink\Contract\SinkWriter;
 
 final class FileSinkWriter implements SinkWriter
 {

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use App\Application;
 use App\Config;
-use App\Sink\FileSinkDriver;
+use App\Sink\Driver\FileSinkDriver;
 use App\Sink\SinkDriverRegistry;
 use PHPUnit\Framework\TestCase;
 

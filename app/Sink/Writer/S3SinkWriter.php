@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace App\Sink;
+namespace App\Sink\Writer;
 
 use Amp\File;
+use App\Sink\Contract\SinkWriter;
 use Aws\S3\S3Client;
 use RuntimeException;
 

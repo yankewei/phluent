@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use App\Sink\S3SinkDriver;
-use App\Sink\S3SinkWriter;
+use App\Sink\Driver\S3SinkDriver;
+use App\Sink\Writer\S3SinkWriter;
 use Aws\Credentials\Credentials;
 use Aws\MockHandler;
 use Aws\Result;

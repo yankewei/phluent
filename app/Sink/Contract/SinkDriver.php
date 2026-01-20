@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Sink;
+namespace App\Sink\Contract;
 
 interface SinkDriver
 {

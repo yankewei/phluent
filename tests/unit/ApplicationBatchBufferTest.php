@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use Amp\File\Driver\BlockingFilesystemDriver;
 use App\Application;
-use App\Sink\FileSinkDriver;
+use App\Sink\Driver\FileSinkDriver;
 use PHPUnit\Framework\TestCase;
 use Revolt\EventLoop;
 
@@ -108,7 +108,7 @@ final class ApplicationBatchBufferTest extends TestCase
     }
 
     /**
-     * @return array<string, array{handle:?Amp\File\File, path:?string, size:int, last_append_at:float, timer_id:?string, sink:array<string, mixed>, driver:\App\Sink\SinkDriver, max_bytes:int, max_wait_seconds:int}>
+     * @return array<string, array{handle:?Amp\File\File, path:?string, size:int, last_append_at:float, timer_id:?string, sink:array<string, mixed>, driver:\App\Sink\Contract\SinkDriver, max_bytes:int, max_wait_seconds:int}>
      */
     private function getBuffers(Application $app): array
     {

@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
-namespace App\Sink;
+namespace App\Sink\Driver;
 
+use App\Sink\Contract\SinkDriver;
+use App\Sink\Contract\SinkWriter;
+use App\Sink\Writer\S3SinkWriter;
 use Aws\Credentials\Credentials;
 use Aws\S3\S3Client;
 use RuntimeException;

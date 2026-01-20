@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 use App\Application;
-use App\Sink\FileSinkDriver;
-use App\Sink\SinkWriter;
+use App\Sink\Contract\SinkWriter;
+use App\Sink\Driver\FileSinkDriver;
 use PHPUnit\Framework\TestCase;
 
 final class ApplicationWriteLineTest extends TestCase

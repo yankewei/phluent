@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Sink;
 
+use App\Sink\Contract\SinkDriver;
+use App\Sink\Driver\FileSinkDriver;
+use App\Sink\Driver\S3SinkDriver;
 use RuntimeException;
 
 final class SinkDriverRegistry
