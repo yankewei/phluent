@@ -1,6 +1,8 @@
 # Phluent
 Phluent is a lightweight file and log aggregation agent written in PHP.
 
+Chinese documentation: README.zh-CN.md
+
 ## Features
 - Watches a directory with inotify when available (Linux), with polling fallback on other platforms.
 - Reads incoming files asynchronously using amphp.
