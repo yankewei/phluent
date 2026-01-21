@@ -6,45 +6,74 @@ namespace App;
 
 use Devium\Toml\Toml;
 use Devium\Toml\TomlError;
+use Respect\Validation\ChainedValidator;
 use Respect\Validation\Exceptions\NestedValidationException;
 use Respect\Validation\Validator;
 use RuntimeException;
 
+/**
+ * @phpstan-type SourceConfig array{type:'file', dir:string, max_bytes:?int, done_suffix?:string}
+ * @phpstan-type SinkBatch array{max_bytes:int, max_wait_seconds:int}
+ * @phpstan-type SinkCredentials array{access_key_id:string, secret_access_key:string, session_token?:string}
+ * @phpstan-type RawSourceConfig array{type:string, dir:string, max_bytes?:int, done_suffix?:string}
+ * @phpstan-type RawSinkConfig array{
+ *   type:string,
+ *   inputs:array<int, string>,
+ *   prefix?:string,
+ *   format?:string,
+ *   compression?:string,
+ *   batch?:SinkBatch,
+ *   dir?:string,
+ *   bucket?:string,
+ *   region?:string,
+ *   endpoint?:string,
+ *   use_path_style_endpoint?:bool,
+ *   credentials?:SinkCredentials
+ * }
+ * @phpstan-type FileSinkConfig array{
+ *   type:'file',
+ *   inputs:array<int, string>,
+ *   format:string,
+ *   compression:?string,
+ *   batch:?SinkBatch,
+ *   batch_max_bytes:?int,
+ *   batch_max_wait_seconds:?int,
+ *   buffer_enabled:bool,
+ *   prefix?:string,
+ *   dir:string,
+ *   path:string
+ * }
+ * @phpstan-type S3SinkConfig array{
+ *   type:'s3',
+ *   inputs:array<int, string>,
+ *   format:string,
+ *   compression:?string,
+ *   batch:?SinkBatch,
+ *   batch_max_bytes:?int,
+ *   batch_max_wait_seconds:?int,
+ *   buffer_enabled:bool,
+ *   prefix?:string,
+ *   bucket:string,
+ *   region:?string,
+ *   endpoint:?string,
+ *   use_path_style_endpoint:bool,
+ *   credentials:?SinkCredentials
+ * }
+ * @phpstan-type SinkConfig FileSinkConfig|S3SinkConfig
+ */
 final class Config
 {
     /**
      * Validated and normalized source config entries from Config::load().
      *
-     * @var array<string, array{
-     *   type:string,
-     *   dir:string,
-     *   max_bytes:?int,
-     *   done_suffix?:string
-     * }>
+     * @var array<string, SourceConfig>
      */
     public readonly array $sources;
 
     /**
      * Validated and normalized sink config entries from Config::load().
      *
-     * @var array<string, array{
-     *   type:string,
-     *   inputs:array<int, string>,
-     *   prefix?:string,
-     *   format:string,
-     *   compression?:?string,
-     *   batch?:?array{max_bytes:int, max_wait_seconds:int},
-     *   path?:string,
-     *   dir?:string,
-     *   bucket?:string,
-     *   region?:?string,
-     *   endpoint?:?string,
-     *   use_path_style_endpoint?:bool,
-     *   credentials?:?array{access_key_id:string, secret_access_key:string, session_token?:string},
-     *   batch_max_bytes:?int,
-     *   batch_max_wait_seconds:?int,
-     *   buffer_enabled:bool
-     * }>
+     * @var array<string, SinkConfig>
      */
     public readonly array $sinks;
 
@@ -54,25 +83,8 @@ final class Config
     public readonly string $baseDir;
 
     /**
-     * @param array<string, array{type:string, dir:string, max_bytes:?int, done_suffix?:string}> $sources
-     * @param array<string, array{
-     *   type:string,
-     *   inputs:array<int, string>,
-     *   prefix?:string,
-     *   format:string,
-     *   compression?:?string,
-     *   batch?:?array{max_bytes:int, max_wait_seconds:int},
-     *   path?:string,
-     *   dir?:string,
-     *   bucket?:string,
-     *   region?:?string,
-     *   endpoint?:?string,
-     *   use_path_style_endpoint?:bool,
-     *   credentials?:?array{access_key_id:string, secret_access_key:string, session_token?:string},
-     *   batch_max_bytes:?int,
-     *   batch_max_wait_seconds:?int,
-     *   buffer_enabled:bool
-     * }> $sinks
+     * @param array<string, SourceConfig> $sources
+     * @param array<string, SinkConfig> $sinks
      */
     private function __construct(array $sources, array $sinks, string $baseDir)
     {
@@ -98,20 +110,37 @@ final class Config
             throw new RuntimeException("Invalid TOML in {$path}:\n{$error->getMessage()}");
         }
 
+        if (!is_array($data)) {
+            throw new RuntimeException('Invalid config at root: expected a table.');
+        }
+
         $sources = $data['sources'] ?? [];
         $sinks = $data['sinks'] ?? [];
+
+        if (!is_array($sources)) {
+            throw new RuntimeException('Invalid config at sources: expected a table.');
+        }
+
+        if (!is_array($sinks)) {
+            throw new RuntimeException('Invalid config at sinks: expected a table.');
+        }
 
         self::assertSchema($sources, self::sourcesSchema(), 'sources');
         self::assertSchema($sinks, self::sinksSchema(), 'sinks');
 
         $baseDir = dirname($path);
+        /** @var array<string, RawSourceConfig> $sources */
         $normalizedSources = self::normalizeSources($sources, $baseDir);
+        /** @var array<string, RawSinkConfig> $sinks */
         $normalizedSinks = self::normalizeSinks($sinks, $normalizedSources, $baseDir);
 
         return new self($normalizedSources, $normalizedSinks, $baseDir);
     }
 
-    private static function assertSchema(array $value, Validator $validator, string $path): void
+    /**
+     * @param array<array-key, mixed> $value
+     */
+    private static function assertSchema(array $value, ChainedValidator $validator, string $path): void
     {
         try {
             $validator->setName($path)->assert($value);
@@ -120,12 +149,12 @@ final class Config
         }
     }
 
-    private static function sourcesSchema(): Validator
+    private static function sourcesSchema(): ChainedValidator
     {
         return Validator::arrayType()->each(self::sourceSchema());
     }
 
-    private static function sourceSchema(): Validator
+    private static function sourceSchema(): ChainedValidator
     {
         return Validator::arrayType()->keySet(
             Validator::key('type', Validator::stringType()->notEmpty()->equals('file')),
@@ -135,12 +164,12 @@ final class Config
         );
     }
 
-    private static function sinksSchema(): Validator
+    private static function sinksSchema(): ChainedValidator
     {
         return Validator::arrayType()->each(self::sinkSchema());
     }
 
-    private static function sinkSchema(): Validator
+    private static function sinkSchema(): ChainedValidator
     {
         return Validator::arrayType()->keySet(
             Validator::key('type', Validator::stringType()->notEmpty()->in(['file', 's3'])),
@@ -174,32 +203,40 @@ final class Config
     }
 
     /**
-     * @return array<string, array<string, mixed>>
+     * @param array<string, RawSourceConfig> $sources
+     * @return array<string, SourceConfig>
      */
     private static function normalizeSources(array $sources, string $baseDir): array
     {
         $normalized = [];
 
         foreach ($sources as $id => $source) {
-            $normalized[$id] = $source;
-            $normalized[$id]['dir'] = self::resolvePath($source['dir'], $baseDir);
-            $normalized[$id]['max_bytes'] = $source['max_bytes'] ?? null;
+            $normalizedSource = [
+                'type' => 'file',
+                'dir' => self::resolvePath($source['dir'], $baseDir),
+                'max_bytes' => $source['max_bytes'] ?? null,
+            ];
+            if (array_key_exists('done_suffix', $source)) {
+                $normalizedSource['done_suffix'] = $source['done_suffix'];
+            }
+            $normalized[$id] = $normalizedSource;
         }
 
         return $normalized;
     }
 
     /**
-     * @param array<string, array<string, mixed>> $sources
-     * @return array<string, array<string, mixed>>
+     * @param array<string, RawSinkConfig> $sinks
+     * @param array<string, SourceConfig> $sources
+     * @return array<string, SinkConfig>
      */
     private static function normalizeSinks(array $sinks, array $sources, string $baseDir): array
     {
         $normalized = [];
 
         foreach ($sinks as $id => $sink) {
-            $type = $sink['type'] ?? '';
-            if (!is_string($type) || $type === '') {
+            $type = $sink['type'];
+            if ($type === '') {
                 throw new RuntimeException("Invalid config at sinks.{$id}.type: type is required");
             }
             if ($type !== 'file' && $type !== 's3') {
@@ -213,51 +250,10 @@ final class Config
             $batchMaxBytes = null;
             $batchMaxWaitSeconds = null;
             if ($batch !== null) {
-                $batchMaxBytes = $batch['max_bytes'] ?? null;
-                $batchMaxWaitSeconds = $batch['max_wait_seconds'] ?? null;
-                if ($batchMaxBytes === null || $batchMaxWaitSeconds === null) {
-                    throw new RuntimeException(
-                        "Invalid config at sinks.{$id}.batch: max_bytes and max_wait_seconds must be set together",
-                    );
-                }
+                $batchMaxBytes = $batch['max_bytes'];
+                $batchMaxWaitSeconds = $batch['max_wait_seconds'];
             }
 
-            if ($type === 'file') {
-                $dir = $sink['dir'] ?? '';
-                if (!is_string($dir) || $dir === '') {
-                    throw new RuntimeException("Invalid config at sinks.{$id}.dir: dir is required");
-                }
-                $resolvedDir = self::resolvePath($dir, $baseDir);
-                $sink['path'] = self::buildDatedUniquePath($resolvedDir, $prefix, $format, $compression);
-            }
-            if ($type === 's3') {
-                $bucket = $sink['bucket'] ?? '';
-                if (!is_string($bucket) || $bucket === '') {
-                    throw new RuntimeException("Invalid config at sinks.{$id}.bucket: bucket is required");
-                }
-                $sink['bucket'] = $bucket;
-                $region = $sink['region'] ?? null;
-                if ($region !== null && !is_string($region)) {
-                    throw new RuntimeException("Invalid config at sinks.{$id}.region: must be a string");
-                }
-                $sink['region'] = $region;
-                $endpoint = $sink['endpoint'] ?? null;
-                if ($endpoint !== null && !is_string($endpoint)) {
-                    throw new RuntimeException("Invalid config at sinks.{$id}.endpoint: must be a string");
-                }
-                $sink['endpoint'] = $endpoint;
-                $usePathStyle = $sink['use_path_style_endpoint'] ?? false;
-                if (!is_bool($usePathStyle)) {
-                    throw new RuntimeException("Invalid config at sinks.{$id}.use_path_style_endpoint: must be a bool");
-                }
-                $sink['use_path_style_endpoint'] = $usePathStyle;
-                $credentials = $sink['credentials'] ?? null;
-                if ($credentials !== null && !is_array($credentials)) {
-                    throw new RuntimeException("Invalid config at sinks.{$id}.credentials: must be a table");
-                }
-                $sink['credentials'] = $credentials;
-            }
-            $sink['format'] = $format;
             $inputs = $sink['inputs'];
 
             foreach ($inputs as $inputId) {
@@ -268,15 +264,51 @@ final class Config
                 throw new RuntimeException("Unknown source referenced by sinks.{$id}.inputs: {$inputId}");
             }
 
-            $normalized[$id] = $sink;
-            $normalized[$id]['type'] = $type;
-            $normalized[$id]['inputs'] = $inputs;
-            $normalized[$id]['format'] = $format;
-            $normalized[$id]['compression'] = $compression;
-            $normalized[$id]['batch'] = $batch;
-            $normalized[$id]['batch_max_bytes'] = $batchMaxBytes;
-            $normalized[$id]['batch_max_wait_seconds'] = $batchMaxWaitSeconds;
-            $normalized[$id]['buffer_enabled'] = $batchMaxBytes !== null;
+            if ($type === 'file') {
+                $dir = $sink['dir'] ?? '';
+                if ($dir === '') {
+                    throw new RuntimeException("Invalid config at sinks.{$id}.dir: dir is required");
+                }
+                $resolvedDir = self::resolvePath($dir, $baseDir);
+                $normalizedSink = [
+                    'type' => 'file',
+                    'inputs' => $inputs,
+                    'format' => $format,
+                    'compression' => $compression,
+                    'batch' => $batch,
+                    'batch_max_bytes' => $batchMaxBytes,
+                    'batch_max_wait_seconds' => $batchMaxWaitSeconds,
+                    'buffer_enabled' => $batchMaxBytes !== null,
+                    'dir' => $dir,
+                    'path' => self::buildDatedUniquePath($resolvedDir, $prefix, $format, $compression),
+                ];
+            } else {
+                $bucket = $sink['bucket'] ?? '';
+                if ($bucket === '') {
+                    throw new RuntimeException("Invalid config at sinks.{$id}.bucket: bucket is required");
+                }
+                $normalizedSink = [
+                    'type' => 's3',
+                    'inputs' => $inputs,
+                    'format' => $format,
+                    'compression' => $compression,
+                    'batch' => $batch,
+                    'batch_max_bytes' => $batchMaxBytes,
+                    'batch_max_wait_seconds' => $batchMaxWaitSeconds,
+                    'buffer_enabled' => $batchMaxBytes !== null,
+                    'bucket' => $bucket,
+                    'region' => $sink['region'] ?? null,
+                    'endpoint' => $sink['endpoint'] ?? null,
+                    'use_path_style_endpoint' => $sink['use_path_style_endpoint'] ?? false,
+                    'credentials' => $sink['credentials'] ?? null,
+                ];
+            }
+
+            if ($prefix !== '' || array_key_exists('prefix', $sink)) {
+                $normalizedSink['prefix'] = $prefix;
+            }
+
+            $normalized[$id] = $normalizedSink;
         }
 
         return $normalized;

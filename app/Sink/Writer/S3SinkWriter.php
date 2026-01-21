@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Sink\Writer;
 
 use Amp\File;
+use Amp\File\File as AmpFile;
 use App\Sink\Contract\SinkWriter;
 use Aws\S3\S3Client;
 use RuntimeException;
@@ -21,7 +22,7 @@ final class S3SinkWriter implements SinkWriter
     private bool $closed = false;
 
     /**
-     * @var Amp\File\File|resource
+     * @var AmpFile|resource
      */
     private $handle;
 
@@ -58,14 +59,18 @@ final class S3SinkWriter implements SinkWriter
     public function write(string $data): void
     {
         if ($this->gzip) {
-            $written = gzwrite($this->handle, $data);
+            /** @var resource $handle */
+            $handle = $this->handle;
+            $written = gzwrite($handle, $data);
             if ($written === false) {
                 throw new RuntimeException('Failed to write gzip buffer.');
             }
             return;
         }
 
-        $this->handle->write($data);
+        /** @var AmpFile $handle */
+        $handle = $this->handle;
+        $handle->write($data);
     }
 
     public function close(): void
@@ -77,9 +82,13 @@ final class S3SinkWriter implements SinkWriter
 
         try {
             if ($this->gzip) {
-                gzclose($this->handle);
+                /** @var resource $handle */
+                $handle = $this->handle;
+                gzclose($handle);
             } else {
-                $this->handle->close();
+                /** @var AmpFile $handle */
+                $handle = $this->handle;
+                $handle->close();
             }
 
             $params = [

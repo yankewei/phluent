@@ -94,14 +94,17 @@ docker compose up -d --build
 docker compose exec php phluent
 ```
 
-## 代码质量 (Mago)
-CI 在每次 push 和 PR 时运行 `mago format --dry-run`、`mago lint`、`mago analyze`。
+## 格式化 (Mago)
+CI 在每次 push 和 PR 时运行 `mago format --dry-run`。
 
 本地运行（需要安装 Mago）：
 ```bash
 mago format --dry-run
-mago lint
-mago analyze
+```
+
+## 静态分析 (PHPStan)
+```bash
+composer phpstan
 ```
 
 ## 测试

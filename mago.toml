@@ -4,9 +4,9 @@ php-version = "8.5.0"
 
 [source]
 workspace = "."
-paths = [""]
-includes = [""]
-excludes = ["vendor"]
+paths = ["."]
+includes = ["**/*.php", "phluent"]
+excludes = ["vendor", "data", "tests"]
 
 [formatter]
 print-width = 120

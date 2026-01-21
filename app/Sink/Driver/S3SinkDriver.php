@@ -11,6 +11,9 @@ use Aws\Credentials\Credentials;
 use Aws\S3\S3Client;
 use RuntimeException;
 
+/**
+ * @phpstan-import-type S3SinkConfig from \App\Config
+ */
 final class S3SinkDriver implements SinkDriver
 {
     /**
@@ -19,7 +22,7 @@ final class S3SinkDriver implements SinkDriver
     private array $clients = [];
 
     /**
-     * @var (callable(array): S3Client)|null
+     * @var (callable(S3SinkConfig): S3Client)|null
      */
     private $clientFactory;
 
@@ -33,22 +36,22 @@ final class S3SinkDriver implements SinkDriver
         return 's3';
     }
 
+    /**
+     * @param S3SinkConfig $sink
+     */
     public function uniqueKey(array $sink): string
     {
-        $bucket = (string) ($sink['bucket'] ?? '');
-        $prefix = (string) ($sink['prefix'] ?? '');
-        $format = (string) ($sink['format'] ?? '');
-        $compression = $sink['compression'] ?? '';
-        $batchMaxBytes = $sink['batch_max_bytes'] ?? '';
-        $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? '';
-        $region = (string) ($sink['region'] ?? '');
-        $endpoint = (string) ($sink['endpoint'] ?? '');
-        $pathStyle = !empty($sink['use_path_style_endpoint']);
-        $accessKey = '';
-        $credentials = $sink['credentials'] ?? null;
-        if (is_array($credentials)) {
-            $accessKey = (string) ($credentials['access_key_id'] ?? '');
-        }
+        $bucket = $sink['bucket'];
+        $prefix = $sink['prefix'] ?? '';
+        $format = $sink['format'];
+        $compression = $sink['compression'];
+        $batchMaxBytes = $sink['batch_max_bytes'];
+        $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'];
+        $region = $sink['region'] ?? '';
+        $endpoint = $sink['endpoint'] ?? '';
+        $pathStyle = $sink['use_path_style_endpoint'];
+        $credentials = $sink['credentials'];
+        $accessKey = $credentials !== null ? $credentials['access_key_id'] : '';
 
         return hash('sha256', serialize([
             'bucket' => $bucket,
@@ -64,17 +67,23 @@ final class S3SinkDriver implements SinkDriver
         ]));
     }
 
+    /**
+     * @param S3SinkConfig $sink
+     */
     public function prepare(array $sink): void
     {
-        $bucket = $sink['bucket'] ?? '';
-        if (!is_string($bucket) || $bucket === '') {
+        $bucket = $sink['bucket'];
+        if ($bucket === '') {
             throw new RuntimeException('S3 bucket is required for s3 sink.');
         }
     }
 
-    public function formatLine(string $line, array $sink): ?string
+    /**
+     * @param S3SinkConfig $sink
+     */
+    public function formatLine(string $line, array $sink): string
     {
-        $format = $sink['format'] ?? 'ndjson';
+        $format = $sink['format'];
         if ($format === 'ndjson') {
             return $line;
         }
@@ -82,23 +91,29 @@ final class S3SinkDriver implements SinkDriver
         throw new RuntimeException("Unsupported sink format: {$format}");
     }
 
+    /**
+     * @param S3SinkConfig $sink
+     */
     public function openWriter(array $sink): SinkWriter
     {
-        $bucket = $sink['bucket'] ?? '';
-        if (!is_string($bucket) || $bucket === '') {
+        $bucket = $sink['bucket'];
+        if ($bucket === '') {
             throw new RuntimeException('S3 bucket is required for s3 sink.');
         }
 
         $prefix = $sink['prefix'] ?? '';
-        $format = $sink['format'] ?? 'ndjson';
-        $compression = $sink['compression'] ?? null;
-        $key = $this->buildObjectKey((string) $prefix, (string) $format, is_string($compression) ? $compression : null);
-        $contentType = $this->contentTypeForFormat((string) $format);
+        $format = $sink['format'];
+        $compression = $sink['compression'];
+        $key = $this->buildObjectKey($prefix, $format, $compression);
+        $contentType = $this->contentTypeForFormat($format);
         $contentEncoding = $compression === 'gzip' ? 'gzip' : null;
 
         return new S3SinkWriter($this->getClient($sink), $bucket, $key, $contentType, $contentEncoding);
     }
 
+    /**
+     * @param S3SinkConfig $sink
+     */
     private function getClient(array $sink): S3Client
     {
         $key = $this->clientKey($sink);
@@ -111,28 +126,31 @@ final class S3SinkDriver implements SinkDriver
         return $client;
     }
 
+    /**
+     * @param S3SinkConfig $sink
+     */
     private function clientKey(array $sink): string
     {
-        $region = (string) ($sink['region'] ?? '');
-        $endpoint = (string) ($sink['endpoint'] ?? '');
-        $pathStyle = !empty($sink['use_path_style_endpoint']) ? '1' : '0';
-        $credentials = $sink['credentials'] ?? null;
-        $accessKey = '';
-        if (is_array($credentials)) {
-            $accessKey = (string) ($credentials['access_key_id'] ?? '');
-        }
+        $region = $sink['region'] ?? '';
+        $endpoint = $sink['endpoint'] ?? '';
+        $pathStyle = $sink['use_path_style_endpoint'] ? '1' : '0';
+        $credentials = $sink['credentials'];
+        $accessKey = $credentials !== null ? $credentials['access_key_id'] : '';
 
         return $region . '|' . $endpoint . '|' . $pathStyle . '|' . $accessKey;
     }
 
+    /**
+     * @param S3SinkConfig $sink
+     */
     protected function createClient(array $sink): S3Client
     {
         if ($this->clientFactory !== null) {
             return ($this->clientFactory)($sink);
         }
 
-        $region = $sink['region'] ?? null;
-        if (!is_string($region) || $region === '') {
+        $region = $sink['region'];
+        if ($region === null || $region === '') {
             $region = getenv('AWS_REGION');
             if ($region === false || $region === '') {
                 $region = getenv('AWS_DEFAULT_REGION');
@@ -147,23 +165,20 @@ final class S3SinkDriver implements SinkDriver
             'region' => $region,
         ];
 
-        $endpoint = $sink['endpoint'] ?? null;
-        if (!is_string($endpoint) || $endpoint === '') {
+        $endpoint = $sink['endpoint'];
+        if ($endpoint === null || $endpoint === '') {
             $endpoint = getenv('AWS_ENDPOINT_URL');
         }
         if (is_string($endpoint) && $endpoint !== '') {
             $config['endpoint'] = $endpoint;
         }
 
-        $usePathStyle = $sink['use_path_style_endpoint'] ?? null;
-        if (is_bool($usePathStyle)) {
-            $config['use_path_style_endpoint'] = $usePathStyle;
-        }
+        $config['use_path_style_endpoint'] = $sink['use_path_style_endpoint'];
 
-        $credentials = $sink['credentials'] ?? null;
-        if (is_array($credentials)) {
-            $accessKey = (string) ($credentials['access_key_id'] ?? '');
-            $secretKey = (string) ($credentials['secret_access_key'] ?? '');
+        $credentials = $sink['credentials'];
+        if ($credentials !== null) {
+            $accessKey = $credentials['access_key_id'];
+            $secretKey = $credentials['secret_access_key'];
             $sessionToken = $credentials['session_token'] ?? null;
             if ($accessKey !== '' && $secretKey !== '') {
                 $config['credentials'] = new Credentials(

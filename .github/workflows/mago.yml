@@ -1,12 +1,12 @@
-name: Mago Checks
+name: Quality Checks
 
 on:
   push:
   pull_request:
 
 jobs:
-  mago:
-    name: Run Mago Checks
+  quality:
+    name: Run Formatting and Static Analysis
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -27,11 +27,11 @@ jobs:
       - name: Setup Mago
         uses: nhedger/setup-mago@v1
 
-      - name: Run Mago checks
-        run: |
-          mago format --dry-run
-          mago lint --reporting-format=github
-          mago analyze --reporting-format=github
+      - name: Run Mago formatter
+        run: mago format --dry-run
+
+      - name: Run PHPStan
+        run: composer phpstan
 
       - name: Run PHPUnit tests
         run: composer test

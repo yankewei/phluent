@@ -95,15 +95,17 @@ docker compose up -d --build
 docker compose exec php phluent
 ```
 
-## Code Quality (Mago)
-CI runs `mago format --dry-run`, `mago lint`, and `mago analyze` on every push and
-pull request.
+## Formatting (Mago)
+CI runs `mago format --dry-run` on every push and pull request.
 
 Local run (requires Mago installed):
 ```bash
 mago format --dry-run
-mago lint
-mago analyze
+```
+
+## Static Analysis (PHPStan)
+```bash
+composer phpstan
 ```
 
 ## Testing

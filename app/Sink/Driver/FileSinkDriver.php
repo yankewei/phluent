@@ -11,6 +11,9 @@ use App\Sink\Writer\FileSinkWriter;
 use App\Sink\Writer\GzipSinkWriter;
 use RuntimeException;
 
+/**
+ * @phpstan-import-type FileSinkConfig from \App\Config
+ */
 final class FileSinkDriver implements SinkDriver
 {
     public function type(): string
@@ -18,13 +21,16 @@ final class FileSinkDriver implements SinkDriver
         return 'file';
     }
 
+    /**
+     * @param FileSinkConfig $sink
+     */
     public function uniqueKey(array $sink): string
     {
-        $path = (string) ($sink['path'] ?? '');
-        $format = (string) ($sink['format'] ?? '');
-        $compression = $sink['compression'] ?? '';
-        $batchMaxBytes = $sink['batch_max_bytes'] ?? '';
-        $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? '';
+        $path = $sink['path'];
+        $format = $sink['format'];
+        $compression = $sink['compression'];
+        $batchMaxBytes = $sink['batch_max_bytes'];
+        $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'];
 
         return hash('sha256', serialize([
             'path' => $path,
@@ -35,10 +41,13 @@ final class FileSinkDriver implements SinkDriver
         ]));
     }
 
+    /**
+     * @param FileSinkConfig $sink
+     */
     public function prepare(array $sink): void
     {
-        $path = $sink['path'] ?? '';
-        if (!is_string($path) || $path === '') {
+        $path = $sink['path'];
+        if ($path === '') {
             throw new RuntimeException('Sink path is required for file driver.');
         }
 
@@ -50,9 +59,12 @@ final class FileSinkDriver implements SinkDriver
         File\createDirectoryRecursively($dir);
     }
 
-    public function formatLine(string $line, array $sink): ?string
+    /**
+     * @param FileSinkConfig $sink
+     */
+    public function formatLine(string $line, array $sink): string
     {
-        $format = $sink['format'] ?? 'ndjson';
+        $format = $sink['format'];
         if ($format === 'ndjson') {
             return $line;
         }
@@ -60,14 +72,17 @@ final class FileSinkDriver implements SinkDriver
         throw new RuntimeException("Unsupported sink format: {$format}");
     }
 
+    /**
+     * @param FileSinkConfig $sink
+     */
     public function openWriter(array $sink): SinkWriter
     {
-        $path = $sink['path'] ?? '';
-        if (!is_string($path) || $path === '') {
+        $path = $sink['path'];
+        if ($path === '') {
             throw new RuntimeException('Sink path is required for file driver.');
         }
 
-        $compression = $sink['compression'] ?? null;
+        $compression = $sink['compression'];
         if ($compression === 'gzip') {
             return new GzipSinkWriter($path);
         }

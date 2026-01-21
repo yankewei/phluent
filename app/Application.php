@@ -11,6 +11,10 @@ use RuntimeException;
 
 use function Amp\async;
 
+/**
+ * @phpstan-import-type SourceConfig from \App\Config
+ * @phpstan-import-type SinkConfig from \App\Config
+ */
 final class Application
 {
     private const DEFAULT_DONE_SUFFIX = '.done';
@@ -23,12 +27,12 @@ final class Application
 
     /**
      * @var array<string, array{
-     *   handle:?Amp\File\File,
+     *   handle:?\Amp\File\File,
      *   path:?string,
      *   size:int,
      *   last_append_at:float,
      *   timer_id:?string,
-     *   sink:array<string, mixed>,
+     *   sink:SinkConfig,
      *   driver:\App\Sink\Contract\SinkDriver,
      *   max_bytes:int,
      *   max_wait_seconds:int
@@ -46,7 +50,7 @@ final class Application
     }
 
     /**
-     * @param array<int, array<string, mixed>> $sinks
+     * @param array<int, SinkConfig> $sinks
      */
     private function enqueueRead(string $filePath, ?int $maxBytes, array $sinks): void
     {
@@ -85,10 +89,7 @@ final class Application
 
             $uniqueSinks = [];
             foreach ($sinks as $sink) {
-                $type = $sink['type'] ?? '';
-                if (!is_string($type) || $type === '') {
-                    throw new RuntimeException('Sink type is required.');
-                }
+                $type = $sink['type'];
                 $driver = $this->sinkDrivers->get($type);
                 $key = $driver->uniqueKey($sink);
                 $uniqueSinks[$key] = [
@@ -103,18 +104,27 @@ final class Application
 
             try {
                 $input = File\openFile($filePath, 'r');
-            } catch (Throwable) {
+
+                /** @var \Amp\File\File $input */
+            } catch (\Throwable) {
                 return;
             }
 
+            /** @var array<int, array{
+             *   driver:\App\Sink\Contract\SinkDriver,
+             *   sink:SinkConfig,
+             *   writer:?\App\Sink\Contract\SinkWriter,
+             *   batch_max_bytes:?int,
+             *   batch_max_wait_seconds:?int
+             * }> $outputs */
             $outputs = [];
             foreach ($uniqueSinks as $entry) {
                 $sink = $entry['sink'];
                 $driver = $entry['driver'];
                 try {
                     $driver->prepare($sink);
-                    $batchMaxBytes = $sink['batch_max_bytes'] ?? null;
-                    $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'] ?? null;
+                    $batchMaxBytes = $sink['batch_max_bytes'];
+                    $batchMaxWaitSeconds = $sink['batch_max_wait_seconds'];
                     $bufferingEnabled = $batchMaxBytes !== null && $batchMaxWaitSeconds !== null;
                     $outputs[] = [
                         'driver' => $driver,
@@ -123,7 +133,7 @@ final class Application
                         'batch_max_bytes' => $batchMaxBytes,
                         'batch_max_wait_seconds' => $batchMaxWaitSeconds,
                     ];
-                } catch (Throwable) {
+                } catch (\Throwable) {
                     $input->close();
                     foreach ($outputs as $output) {
                         if ($output['writer'] === null) {
@@ -143,7 +153,7 @@ final class Application
 
             $buffer = '';
             while (($chunk = $input->read()) !== null) {
-                $buffer .= $chunk;
+                $buffer .= (string) $chunk;
 
                 while (($pos = strpos($buffer, "\n")) !== false) {
                     $line = substr($buffer, 0, $pos + 1);
@@ -156,7 +166,7 @@ final class Application
                 $this->writeLine($outputs, $buffer, $maxBytes);
             }
 
-            $newOffset = $input->tell();
+            $newOffset = (int) $input->tell();
 
             $input->close();
             foreach ($outputs as $output) {
@@ -187,6 +197,9 @@ final class Application
         fwrite(STDERR, "[phluent] {$message}" . PHP_EOL);
     }
 
+    /**
+     * @return array{dev:int, ino:int, size:int}|null
+     */
     private function getFileStat(string $path): ?array
     {
         $previous = set_error_handler(static function (int $type, string $message): void {
@@ -208,13 +221,17 @@ final class Application
             return null;
         }
 
-        return $stat;
+        return [
+            'dev' => (int) $stat['dev'],
+            'ino' => (int) $stat['ino'],
+            'size' => (int) $stat['size'],
+        ];
     }
 
     /**
      * @param array<int, array{
      *   driver:\App\Sink\Contract\SinkDriver,
-     *   sink:array<string, mixed>,
+     *   sink:SinkConfig,
      *   writer:?\App\Sink\Contract\SinkWriter,
      *   batch_max_bytes:?int,
      *   batch_max_wait_seconds:?int
@@ -234,10 +251,15 @@ final class Application
             if ($formatted === null) {
                 continue;
             }
-            $batchMaxBytes = $output['batch_max_bytes'] ?? null;
-            $batchMaxWaitSeconds = $output['batch_max_wait_seconds'] ?? null;
+            $batchMaxBytes = $output['batch_max_bytes'];
+            $batchMaxWaitSeconds = $output['batch_max_wait_seconds'];
             if ($batchMaxBytes !== null && $batchMaxWaitSeconds !== null) {
-                $this->bufferLine($output, $formatted);
+                $this->bufferLine([
+                    'driver' => $output['driver'],
+                    'sink' => $output['sink'],
+                    'batch_max_bytes' => $batchMaxBytes,
+                    'batch_max_wait_seconds' => $batchMaxWaitSeconds,
+                ], $formatted);
                 continue;
             }
             if ($output['writer'] !== null) {
@@ -249,7 +271,7 @@ final class Application
     /**
      * @param array{
      *   driver:\App\Sink\Contract\SinkDriver,
-     *   sink:array<string, mixed>,
+     *   sink:SinkConfig,
      *   batch_max_bytes:int,
      *   batch_max_wait_seconds:int
      * } $output
@@ -275,13 +297,29 @@ final class Application
     }
 
     /**
-     * @param array{driver:\App\Sink\Contract\SinkDriver, sink:array<string, mixed>, batch_max_bytes:int, batch_max_wait_seconds:int} $output
-     * @return array{handle:Amp\File\File, path:string, size:int, last_append_at:float, timer_id:?string, sink:array<string, mixed>, driver:\App\Sink\Contract\SinkDriver, max_bytes:int, max_wait_seconds:int}
+     * @param array{
+     *   driver:\App\Sink\Contract\SinkDriver,
+     *   sink:SinkConfig,
+     *   batch_max_bytes:int,
+     *   batch_max_wait_seconds:int
+     * } $output
+     * @return array{
+     *   handle:\Amp\File\File,
+     *   path:string,
+     *   size:int,
+     *   last_append_at:float,
+     *   timer_id:?string,
+     *   sink:SinkConfig,
+     *   driver:\App\Sink\Contract\SinkDriver,
+     *   max_bytes:int,
+     *   max_wait_seconds:int
+     * }
      */
     private function createBufferState(array $output): array
     {
         $path = $this->createTempBufferPath();
         $handle = File\openFile($path, 'c+');
+        /** @var \Amp\File\File $handle */
 
         return [
             'handle' => $handle,
@@ -394,10 +432,11 @@ final class Application
     }
 
     /**
-     * @return array<string, array<int, array<string, mixed>>>
+     * @return array<string, list<SinkConfig>>
      */
     private function buildSourceSinkMap(Config $config): array
     {
+        /** @var array<string, list<SinkConfig>> $map */
         $map = [];
 
         foreach ($config->sinks as $sink) {
@@ -443,14 +482,14 @@ final class Application
     }
 
     /**
-     * @param array<string, array<string, mixed>> $fileSources
-     * @param array<string, array<int, array<string, mixed>>> $sourceToSinks
+     * @param array<string, SourceConfig> $fileSources
+     * @param array<string, list<SinkConfig>> $sourceToSinks
      */
     private function runWithInotify(array $fileSources, array $sourceToSinks): void
     {
         $fd = inotify_init();
 
-        if ($fd === false) {
+        if (!is_resource($fd)) {
             $this->debug('Init inotify failed, falling back to polling');
             $this->runWithPolling($fileSources, $sourceToSinks);
             return;
@@ -461,8 +500,8 @@ final class Application
         $fileContexts = [];
 
         foreach ($fileSources as $id => $source) {
-            $watchDir = $source['dir'] ?? '';
-            if (!is_string($watchDir) || $watchDir === '') {
+            $watchDir = $source['dir'];
+            if ($watchDir === '') {
                 throw new RuntimeException("Watch directory missing for source: {$id}");
             }
 
@@ -470,7 +509,7 @@ final class Application
                 throw new RuntimeException("Watch directory not found: {$watchDir}");
             }
 
-            $maxBytes = $source['max_bytes'] ?? null;
+            $maxBytes = $source['max_bytes'];
 
             $watchId = inotify_add_watch($fd, $watchDir, IN_CLOSE_WRITE | IN_MOVED_TO);
             if ($watchId === false) {
@@ -479,7 +518,7 @@ final class Application
 
             $fileContexts[$watchId] = [
                 'dir' => $watchDir,
-                'max_bytes' => is_int($maxBytes) ? $maxBytes : null,
+                'max_bytes' => $maxBytes,
                 'sinks' => $sourceToSinks[$id],
             ];
         }
@@ -491,7 +530,7 @@ final class Application
                 throw new RuntimeException('Events must not false, should be an array contain multiple event');
             }
 
-            /** @var array{wd:int,mask:int,cookie:int,name:string} $event */
+            /** @var array{wd:int<1,max>,mask:int<1,max>,cookie:int<1,max>,name:string} $event */
             foreach ($events as $event) {
                 $context = $fileContexts[$event['wd']] ?? null;
                 if ($context === null) {
@@ -507,16 +546,16 @@ final class Application
     }
 
     /**
-     * @param array<string, array<string, mixed>> $fileSources
-     * @param array<string, array<int, array<string, mixed>>> $sourceToSinks
+     * @param array<string, SourceConfig> $fileSources
+     * @param array<string, list<SinkConfig>> $sourceToSinks
      */
     private function runWithPolling(array $fileSources, array $sourceToSinks): void
     {
         $fileContexts = [];
 
         foreach ($fileSources as $id => $source) {
-            $watchDir = $source['dir'] ?? '';
-            if (!is_string($watchDir) || $watchDir === '') {
+            $watchDir = $source['dir'];
+            if ($watchDir === '') {
                 throw new RuntimeException("Watch directory missing for source: {$id}");
             }
 
@@ -524,16 +563,16 @@ final class Application
                 throw new RuntimeException("Watch directory not found: {$watchDir}");
             }
 
-            $maxBytes = $source['max_bytes'] ?? null;
+            $maxBytes = $source['max_bytes'];
             $doneSuffix = $source['done_suffix'] ?? self::DEFAULT_DONE_SUFFIX;
 
-            if (!is_string($doneSuffix) || $doneSuffix === '') {
+            if ($doneSuffix === '') {
                 $doneSuffix = self::DEFAULT_DONE_SUFFIX;
             }
 
             $fileContexts[] = [
                 'dir' => $watchDir,
-                'max_bytes' => is_int($maxBytes) ? $maxBytes : null,
+                'max_bytes' => $maxBytes,
                 'sinks' => $sourceToSinks[$id],
                 'done_suffix' => $doneSuffix,
             ];
@@ -541,8 +580,14 @@ final class Application
 
         $poll = function (string $callbackId) use ($fileContexts): void {
             foreach ($fileContexts as $context) {
-                $iterator = new \FilesystemIterator($context['dir'], \FilesystemIterator::SKIP_DOTS);
+                $iterator = new \FilesystemIterator(
+                    $context['dir'],
+                    \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::CURRENT_AS_FILEINFO,
+                );
                 foreach ($iterator as $entry) {
+                    if (!$entry instanceof \SplFileInfo) {
+                        continue;
+                    }
                     if (!$entry->isFile()) {
                         continue;
                     }
