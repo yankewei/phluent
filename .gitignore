@@ -13,3 +13,4 @@ Thumbs.db
 .vscode/
 coverage/
 .codex
+phluent.toml
