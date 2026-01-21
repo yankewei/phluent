@@ -6,8 +6,8 @@ namespace App;
 
 use Devium\Toml\Toml;
 use Devium\Toml\TomlError;
-use Respect\Validation\ChainedValidator;
 use Respect\Validation\Exceptions\NestedValidationException;
+use Respect\Validation\Validatable;
 use Respect\Validation\Validator;
 use RuntimeException;
 
@@ -140,7 +140,7 @@ final class Config
     /**
      * @param array<array-key, mixed> $value
      */
-    private static function assertSchema(array $value, ChainedValidator $validator, string $path): void
+    private static function assertSchema(array $value, Validatable $validator, string $path): void
     {
         try {
             $validator->setName($path)->assert($value);
@@ -149,12 +149,12 @@ final class Config
         }
     }
 
-    private static function sourcesSchema(): ChainedValidator
+    private static function sourcesSchema(): Validatable
     {
         return Validator::arrayType()->each(self::sourceSchema());
     }
 
-    private static function sourceSchema(): ChainedValidator
+    private static function sourceSchema(): Validatable
     {
         return Validator::arrayType()->keySet(
             Validator::key('type', Validator::stringType()->notEmpty()->equals('file')),
@@ -164,12 +164,12 @@ final class Config
         );
     }
 
-    private static function sinksSchema(): ChainedValidator
+    private static function sinksSchema(): Validatable
     {
         return Validator::arrayType()->each(self::sinkSchema());
     }
 
-    private static function sinkSchema(): ChainedValidator
+    private static function sinkSchema(): Validatable
     {
         return Validator::arrayType()->keySet(
             Validator::key('type', Validator::stringType()->notEmpty()->in(['file', 's3'])),

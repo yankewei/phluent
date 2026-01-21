@@ -29,6 +29,10 @@ final class S3SinkDriverTest extends TestCase
             'prefix' => 'logs',
             'format' => 'ndjson',
             'compression' => null,
+            'region' => null,
+            'endpoint' => null,
+            'use_path_style_endpoint' => false,
+            'credentials' => null,
             'batch_max_bytes' => null,
             'batch_max_wait_seconds' => null,
         ]);
@@ -71,6 +75,10 @@ final class S3SinkDriverTest extends TestCase
             'prefix' => 'logs',
             'format' => 'ndjson',
             'compression' => 'gzip',
+            'region' => null,
+            'endpoint' => null,
+            'use_path_style_endpoint' => false,
+            'credentials' => null,
             'batch_max_bytes' => null,
             'batch_max_wait_seconds' => null,
         ]);
