@@ -4,6 +4,7 @@ vendor
 Thumbs.db
 *.cache
 *.log
+!tests/fixtures/input/core.log
 *.tmp
 *.swp
 .env
